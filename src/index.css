@@ -1,0 +1,42 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-boneek-bg: #f4f7fa;
+  --color-boneek-text: #1e293b;
+  --color-boneek-border: #e2e8f0;
+  --color-boneek-accent: #3b82f6;
+  --color-boneek-dark: #1e293b;
+  
+  /* Status colors from design */
+  --color-status-pending: #f59e0b;
+  --color-status-approved: #10b981;
+  --color-status-follow: #8b5cf6;
+  --color-status-cancelled: #ef4444;
+  --color-status-ready: #3b82f6;
+  --color-status-transit: #0ea5e9;
+  --color-status-delivered: #ec4899;
+  --color-status-update: #10b981;
+}
+
+@layer base {
+  body {
+    @apply bg-boneek-bg font-sans text-boneek-text overflow-x-hidden antialiased;
+  }
+}
+
+.dotted-line {
+  background-image: linear-gradient(to right, #cbd5e1 25%, rgba(255,255,255,0) 0%);
+  background-position: bottom;
+  background-size: 4px 1px;
+  background-repeat: repeat-x;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
