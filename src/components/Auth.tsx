@@ -57,7 +57,7 @@ export default function Auth() {
             <div className="bg-blue-600 p-2.5 rounded-xl text-white shadow-lg shadow-blue-200">
               <ShoppingBag size={24} />
             </div>
-            <h1 className="text-2xl font-black text-slate-800 tracking-tight">boneek</h1>
+            <h1 className="text-2xl font-black text-slate-800 tracking-tight">WooCommerce</h1>
           </div>
 
           <div className="text-center mb-8">
@@ -170,7 +170,7 @@ export default function Auth() {
       </motion.div>
       
       <p className="text-[10px] text-slate-400 mt-8 font-medium uppercase tracking-[0.2em]">
-        © 2026 Boneek Dashboard • All Rights Reserved
+        © 2026 WooCommerce Dashboard • All Rights Reserved
       </p>
     </div>
   );

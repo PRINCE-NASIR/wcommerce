@@ -3,11 +3,11 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --color-boneek-bg: #f4f7fa;
-  --color-boneek-text: #1e293b;
-  --color-boneek-border: #e2e8f0;
-  --color-boneek-accent: #3b82f6;
-  --color-boneek-dark: #1e293b;
+  --color-brand-bg: #f4f7fa;
+  --color-brand-text: #1e293b;
+  --color-brand-border: #e2e8f0;
+  --color-brand-accent: #3b82f6;
+  --color-brand-dark: #1e293b;
   
   /* Status colors from design */
   --color-status-pending: #f59e0b;
@@ -22,7 +22,7 @@
 
 @layer base {
   body {
-    @apply bg-boneek-bg font-sans text-boneek-text overflow-x-hidden antialiased;
+    @apply bg-brand-bg font-sans text-brand-text overflow-x-hidden antialiased;
   }
 }
 

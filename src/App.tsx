@@ -661,7 +661,7 @@ export default function App() {
         </head>
         <body>
           <div class="header">
-            <div class="logo">boneek</div>
+            <div class="logo">WooCommerce</div>
             <div class="invoice-title">INVOICE ${selectedOrder.id}</div>
           </div>
           <div class="details">
@@ -713,7 +713,7 @@ export default function App() {
             </div>
           </div>
           <div style="margin-top: 80px; border-top: 1px solid #f1f5f9; padding-top: 20px; text-align: center; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">
-            Thank you for shopping with boneek
+            Thank you for shopping with WooCommerce
           </div>
           <script>
             window.onload = () => {
@@ -942,7 +942,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-boneek-bg flex flex-col">
+    <div className="min-h-screen bg-brand-bg flex flex-col">
       {/* Add New Order Modal */}
       <AnimatePresence>
         {isAddNewModalOpen && (
@@ -1759,13 +1759,13 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
-      <header className="h-16 bg-white border-b border-slate-200 text-boneek-text flex items-center justify-between px-6 z-50 fixed top-0 w-full shadow-sm">
+      <header className="h-16 bg-white border-b border-slate-200 text-brand-text flex items-center justify-between px-6 z-50 fixed top-0 w-full shadow-sm">
         <div className="flex items-center gap-6 flex-1">
           <button onClick={toggleSidebar} className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-500">
             <Menu size={24} />
           </button>
           <div className="flex items-center gap-2 hidden sm:flex cursor-pointer" onClick={() => setCurrentView('dashboard')}>
-            <span className="text-2xl font-black text-[#1e293b] tracking-tighter">boneek</span>
+            <span className="text-2xl font-black text-[#1e293b] tracking-tighter">WooCommerce</span>
             {isBackendConfigured ? (
               <span className="ml-2 px-2 py-0.5 bg-green-50 text-green-600 text-[10px] font-bold rounded-full border border-green-100 flex items-center gap-1">
                 <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
@@ -1942,7 +1942,7 @@ export default function App() {
               className="fixed top-0 left-0 h-full w-[260px] bg-white border-r border-slate-200 z-[52] shadow-2xl flex flex-col"
             >
               <div className="h-16 flex items-center px-6 border-b border-slate-100 shrink-0">
-                <span className="text-2xl font-black text-[#1e293b] tracking-tighter">boneek</span>
+                <span className="text-2xl font-black text-[#1e293b] tracking-tighter">WooCommerce</span>
               </div>
               <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-1 scrollbar-none">
                 <SidebarItem 
@@ -2785,7 +2785,7 @@ export default function App() {
 
       {/* Footer / Credits */}
       <footer className="py-8 text-center text-slate-400 text-[10px] font-medium uppercase tracking-[0.2em] opacity-60">
-        Boneek Enterprise POS &bull; Version 2.0.4 &bull; &copy; 2026
+        WooCommerce Enterprise POS &bull; Version 2.0.4 &bull; &copy; 2026
       </footer>
     </div>
   );
