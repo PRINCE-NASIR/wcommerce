@@ -10,35 +10,35 @@ import { createServer as createViteServer } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
+
+app.use(cors());
+app.use(express.json({
+  verify: (req: any, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
+
+// WooCommerce Configuration
+let WOO_URL = (process.env.VITE_WOOCOMMERCE_URL || process.env.WOOCOMMERCE_URL || '').replace(/\/$/, '');
+let WOO_KEY = process.env.VITE_WOOCOMMERCE_KEY || process.env.WOOCOMMERCE_KEY;
+let WOO_SECRET = process.env.VITE_WOOCOMMERCE_SECRET || process.env.WOOCOMMERCE_SECRET;
+let WEBHOOK_SECRET = process.env.VITE_WOOCOMMERCE_WEBHOOK_SECRET || process.env.WOOCOMMERCE_WEBHOOK_SECRET;
+
+const getWooAuth = () => {
+  if (!WOO_KEY || !WOO_SECRET) return null;
+  return Buffer.from(`${WOO_KEY}:${WOO_SECRET}`).toString('base64');
+};
+
 async function startServer() {
-  const app = express();
-  const httpServer = createServer(app);
-  const io = new Server(httpServer, {
-    cors: {
-      origin: '*',
-      methods: ['GET', 'POST']
-    }
-  });
-
   const PORT = 3000;
-
-  app.use(cors());
-  app.use(express.json({
-    verify: (req: any, res, buf) => {
-      req.rawBody = buf;
-    }
-  }));
-
-  // WooCommerce Configuration
-  let WOO_URL = (process.env.WOOCOMMERCE_URL || process.env.VITE_WOOCOMMERCE_URL || '').replace(/\/$/, '');
-  let WOO_KEY = process.env.WOOCOMMERCE_KEY;
-  let WOO_SECRET = process.env.WOOCOMMERCE_SECRET;
-  let WEBHOOK_SECRET = process.env.WOOCOMMERCE_WEBHOOK_SECRET;
-
-  const getWooAuth = () => {
-    if (!WOO_KEY || !WOO_SECRET) return null;
-    return Buffer.from(`${WOO_KEY}:${WOO_SECRET}`).toString('base64');
-  };
 
   // API to update configuration dynamically (volatile, for preview/demo)
   app.post('/api/config', (req, res) => {
@@ -177,4 +177,9 @@ async function startServer() {
   });
 }
 
-startServer();
+  // Export app for Vercel
+export default app;
+
+if (process.env.NODE_ENV !== 'production') {
+  startServer();
+}
