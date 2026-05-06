@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { io } from 'socket.io-client';
 import axios from 'axios';
 import { supabase } from './lib/supabase';
@@ -224,6 +224,12 @@ export default function App() {
     webhookSecret: ''
   });
 
+  const [businessDetails, setBusinessDetails] = useState({
+    name: '',
+    phone: '',
+    website: ''
+  });
+
   const [isConfigSaving, setIsConfigSaving] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
 
@@ -386,9 +392,14 @@ export default function App() {
         if (data && !error) {
           setWooConfig({
             url: data.woo_url || '',
-            key: data.woo_key || '',
+            key: data.key || '', // Fallback to key if woo_key missing from local tree but usually match
             secret: data.woo_secret || '',
             webhookSecret: data.webhook_secret || ''
+          });
+          setBusinessDetails({
+            name: data.business_name || '',
+            phone: data.business_phone || '',
+            website: data.business_website || ''
           });
         }
       };
@@ -396,14 +407,26 @@ export default function App() {
       const loadSyncedData = async () => {
         if (!supabase || !session?.user) return;
         
-        // Load Synced Stats
-        const { data: setts } = await supabase.from('settings').select('total_sales, order_count').eq('user_id', session.user.id).maybeSingle();
+        // Load Synced Stats & Business Details
+        const { data: setts } = await supabase.from('settings').select('*').eq('user_id', session.user.id).maybeSingle();
         if (setts) {
           setWooStats(prev => ({
             ...prev,
             totalSales: setts.total_sales || 0,
             orderCount: setts.order_count || 0,
             avgOrderValue: setts.order_count > 0 ? setts.total_sales / setts.order_count : 0
+          }));
+          setBusinessDetails({
+            name: setts.business_name || '',
+            phone: setts.business_phone || '',
+            website: setts.business_website || ''
+          });
+          setWooConfig(prev => ({
+            ...prev,
+            url: setts.woo_url || prev.url,
+            key: setts.woo_key || prev.key,
+            secret: setts.woo_secret || prev.secret,
+            webhookSecret: setts.webhook_secret || prev.webhookSecret
           }));
         }
 
@@ -421,7 +444,7 @@ export default function App() {
             amount: o.amount,
             codAmount: o.cod_amount,
             status: o.status,
-            date: o.order_date || new Date(o.created_at || Date.now()).toLocaleDateString(),
+            date: o.order_date || new Date(o.created_at || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
             time: o.order_time || 'Cloud'
           }));
           setOrders(syncedOrders);
@@ -479,7 +502,7 @@ export default function App() {
     }
   }, [wooConfig, getWooStats, getWooProducts]);
 
-  const saveWooConfig = async () => {
+  const saveAccountSettings = async () => {
     setIsConfigSaving(true);
     setConfigError(null);
     try {
@@ -495,12 +518,29 @@ export default function App() {
           woo_key: wooConfig.key,
           woo_secret: wooConfig.secret,
           webhook_secret: wooConfig.webhookSecret,
+          business_name: businessDetails.name,
+          business_phone: businessDetails.phone,
+          business_website: businessDetails.website,
           updated_at: new Date().toISOString()
         }, { onConflict: 'user_id' });
 
       if (dbError) throw dbError;
       
-      setIsBackendConfigured(true);
+      setNotifications([
+        {
+          id: Date.now(),
+          title: 'Settings Saved',
+          message: 'Your account and business details have been updated.',
+          time: 'Just now',
+          read: false
+        },
+        ...notifications
+      ]);
+
+      if (typeof setIsBackendConfigured === 'function') {
+        setIsBackendConfigured(true);
+      }
+      
       // Refresh data with newly saved config
       getWooStats();
       getWooProducts();
@@ -918,6 +958,52 @@ export default function App() {
 
   const [timeRange, setTimeRange] = useState<'7' | '30'>('30');
   const [isTimeRangeOpen, setIsTimeRangeOpen] = useState(false);
+
+  const userInitials = useMemo(() => {
+    if (!session?.user) return '??';
+    const email = session.user.email || '';
+    const name = session.user.user_metadata?.full_name || email.split('@')[0];
+    if (name.includes(' ')) {
+      const parts = name.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+      }
+    }
+    return name.substring(0, 2).toUpperCase();
+  }, [session]);
+
+  const userDisplayName = useMemo(() => {
+    if (businessDetails.name) return businessDetails.name;
+    if (!session?.user) return 'Guest';
+    return session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User';
+  }, [session, businessDetails.name]);
+
+  const chartData = useMemo(() => {
+    if (!orders || orders.length === 0) return [];
+    const days = timeRange === '7' ? 7 : 30;
+    const dataMap: Record<string, number> = {};
+    
+    // Initialize last N days with zero sales
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const ds = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      dataMap[ds] = 0;
+    }
+
+    // Sum order amounts by date
+    orders.forEach(o => {
+      const od = new Date(o.date);
+      if (!isNaN(od.getTime())) {
+        const ds = od.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        if (dataMap[ds] !== undefined) {
+          dataMap[ds] += (o.amount || 0);
+        }
+      }
+    });
+
+    return Object.entries(dataMap).map(([name, value]) => ({ name, value }));
+  }, [orders, timeRange]);
 
   const handleAddCustomer = (e: React.FormEvent) => {
     e.preventDefault();
@@ -2424,11 +2510,11 @@ export default function App() {
               className="flex items-center gap-3 cursor-pointer group"
             >
               <div className="flex flex-col text-right hidden lg:flex">
-                <span className="text-sm font-semibold leading-tight group-hover:text-blue-600 transition-colors">Nasir Uddin</span>
-                <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase">Administrator</span>
+                <span className="text-sm font-semibold leading-tight group-hover:text-blue-600 transition-colors uppercase tracking-tight">{userDisplayName}</span>
+                <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase">{session?.user?.email}</span>
               </div>
               <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-sm border-2 border-blue-50 shadow-sm transition-all group-hover:scale-105 active:scale-95 group-hover:shadow-md">
-                NU
+                {userInitials}
               </div>
             </div>
 
@@ -2708,7 +2794,7 @@ export default function App() {
             {currentView === 'settings' && (
               <button 
                 disabled={isConfigSaving || !wooConfig.url || !wooConfig.key || !wooConfig.secret}
-                onClick={saveWooConfig}
+                onClick={saveAccountSettings}
                 className="bg-blue-600 text-white px-6 py-2 rounded-lg text-xs font-bold shadow-md shadow-blue-500/20 hover:bg-blue-700 transition-colors uppercase tracking-widest active:scale-95 disabled:opacity-50"
               >
                 {isConfigSaving ? 'Saving...' : 'Save'}
@@ -2799,34 +2885,91 @@ export default function App() {
                   <div className="w-20 h-20 bg-blue-100 rounded-2xl flex items-center justify-center text-blue-600 shrink-0">
                     <Users size={32} />
                   </div>
-                  <div className="overflow-hidden w-full">
-                    <h3 className="text-xl font-bold text-slate-800 break-all">{session?.user?.email}</h3>
-                    <p className="text-sm text-slate-500 font-medium tracking-wide">Store Administrator</p>
+                  <div className="overflow-hidden w-full text-center sm:text-left">
+                    <h3 className="text-xl font-bold text-slate-800 break-all">{userDisplayName}</h3>
+                    <p className="text-sm text-slate-500 font-medium tracking-wide">{session?.user?.email}</p>
+                    <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-[10px] font-black uppercase tracking-widest">
+                      User ID: {session?.user?.id.substring(0, 8)}
+                    </div>
                   </div>
                 </div>
 
-                <div className="space-y-4 pt-6 border-t border-slate-50">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
-                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">User ID</span>
-                      <span className="text-xs font-mono text-slate-600 block truncate" title={session?.user?.id}>{session?.user?.id}</span>
+                <div className="space-y-8 pt-8 border-t border-slate-50">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2">
+                       <Store size={18} className="text-blue-500" />
+                       Business Details
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Business Name</label>
+                        <input 
+                          type="text" 
+                          placeholder="Your Brand Name"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-300"
+                          value={businessDetails.name}
+                          onChange={(e) => setBusinessDetails({ ...businessDetails, name: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Business Phone</label>
+                        <input 
+                          type="tel" 
+                          placeholder="+880 1XXX XXXXXX"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-300"
+                          value={businessDetails.phone}
+                          onChange={(e) => setBusinessDetails({ ...businessDetails, phone: e.target.value })}
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Website URL</label>
+                        <input 
+                          type="url" 
+                          placeholder="https://yourstore.com"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-300"
+                          value={businessDetails.website}
+                          onChange={(e) => setBusinessDetails({ ...businessDetails, website: e.target.value })}
+                        />
+                      </div>
                     </div>
-                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Last Login</span>
-                      <span className="text-xs font-medium text-slate-600 block">
-                        {session?.user?.last_sign_in_at ? new Date(session.user.last_sign_in_at).toLocaleString() : 'Just now'}
-                      </span>
+                    <div className="mt-8 flex justify-center sm:justify-end">
+                      <button 
+                         onClick={saveAccountSettings}
+                         disabled={isConfigSaving}
+                         className="px-8 py-3 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50"
+                      >
+                        {isConfigSaving ? 'Saving...' : 'Update Business Details'}
+                      </button>
                     </div>
                   </div>
-                  
-                  <div className="mt-8 flex justify-center sm:justify-end">
-                    <button 
-                      onClick={handleLogout}
-                      className="flex items-center gap-2 px-6 py-2.5 bg-red-50 text-red-600 rounded-xl text-xs font-bold hover:bg-red-100 transition-colors uppercase tracking-widest active:scale-95"
-                    >
-                      <LogOut size={16} />
-                      Sign Out
-                    </button>
+
+                  <div className="pt-8 border-t border-slate-50">
+                    <h4 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2">
+                       <ShieldCheck size={18} className="text-slate-400" />
+                       Account Security
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+                      <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Full User ID</span>
+                        <span className="text-[10px] font-mono text-slate-600 block truncate" title={session?.user?.id}>{session?.user?.id}</span>
+                      </div>
+                      <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Last Login</span>
+                        <span className="text-xs font-medium text-slate-600 block">
+                          {session?.user?.last_sign_in_at ? new Date(session.user.last_sign_in_at).toLocaleString() : 'Just now'}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-8 flex justify-center sm:justify-end">
+                      <button 
+                        onClick={handleLogout}
+                        className="flex items-center gap-2 px-6 py-2.5 bg-red-50 text-red-600 rounded-xl text-xs font-bold hover:bg-red-100 transition-colors uppercase tracking-widest active:scale-95"
+                      >
+                        <LogOut size={16} />
+                        Sign Out
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2859,7 +3002,7 @@ export default function App() {
                 </div>
                 <div className="h-[250px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={timeRange === '7' ? SALES_DATA_7 : SALES_DATA_30}>
+                    <AreaChart data={chartData}>
                       <defs>
                         <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.08}/>
