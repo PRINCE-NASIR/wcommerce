@@ -39,7 +39,11 @@ export default function Auth() {
         alert('Check your email for the confirmation link!');
       }
     } catch (err: any) {
-      setError(err.message);
+      let message = err.message;
+      if (message.includes('Invalid path specified in request URL')) {
+        message = 'Supabase URL is incorrect. Please check your VITE_SUPABASE_URL environment variable. It should look like: https://xyz.supabase.co';
+      }
+      setError(message);
     } finally {
       setLoading(false);
     }
