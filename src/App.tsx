@@ -378,121 +378,106 @@ export default function App() {
     }
   }, [wooConfig]);
 
-  // Fetch settings from Supabase on mount/auth
+  // Consolidated settings and data loading
   useEffect(() => {
-    if (session?.user) {
-      const loadSettings = async () => {
-        if (!supabase) return;
-        const { data, error } = await supabase
-          .from('settings')
-          .select('*')
-          .eq('user_id', session.user.id)
-          .maybeSingle();
+    if (session?.user && supabase) {
+      const initializeData = async () => {
+        try {
+          // Load settings and stats
+          const { data: settingsData, error: settingsError } = await supabase
+            .from('settings')
+            .select('*')
+            .eq('user_id', session.user.id)
+            .maybeSingle();
 
-        if (data && !error) {
-          setWooConfig({
-            url: data.woo_url || '',
-            key: data.key || '', // Fallback to key if woo_key missing from local tree but usually match
-            secret: data.woo_secret || '',
-            webhookSecret: data.webhook_secret || ''
-          });
-          setBusinessDetails({
-            name: data.business_name || '',
-            phone: data.business_phone || '',
-            website: data.business_website || ''
-          });
+          if (settingsError) throw settingsError;
+
+          if (settingsData) {
+            // Map settings (handling potential column naming differences)
+            setWooConfig({
+              url: settingsData.woo_url || '',
+              key: settingsData.woo_key || settingsData.key || '',
+              secret: settingsData.woo_secret || '',
+              webhookSecret: settingsData.webhook_secret || ''
+            });
+
+            setBusinessDetails({
+              name: settingsData.business_name || '',
+              phone: settingsData.business_phone || '',
+              website: settingsData.business_website || ''
+            });
+
+            if (settingsData.total_sales !== undefined) {
+              setWooStats(prev => ({
+                ...prev,
+                totalSales: settingsData.total_sales || 0,
+                orderCount: settingsData.order_count || 0,
+                avgOrderValue: settingsData.order_count > 0 ? settingsData.total_sales / settingsData.order_count : 0
+              }));
+            }
+          }
+
+          // Load synced entities
+          const [ordersRes, productsRes, customersRes] = await Promise.all([
+            supabase.from('orders').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false }).limit(100),
+            supabase.from('products').select('*').eq('user_id', session.user.id).limit(100),
+            supabase.from('customers').select('*').eq('user_id', session.user.id).limit(100)
+          ]);
+
+          if (ordersRes.data) {
+            setOrders(ordersRes.data.map(o => ({
+              id: o.order_id,
+              customer: o.customer_name,
+              phone: o.customer_phone,
+              address: o.customer_address,
+              productName: o.product_name,
+              productPrice: o.product_price,
+              deliveryCharge: o.delivery_charge,
+              amount: o.amount,
+              codAmount: o.cod_amount,
+              status: o.status,
+              date: o.order_date || new Date(o.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+              time: o.order_time || 'Cloud'
+            })));
+          }
+
+          if (productsRes.data) {
+            setProducts(productsRes.data.map(p => ({
+              id: p.product_id,
+              name: p.name,
+              price: p.price,
+              stock: p.stock,
+              category: p.category || 'Cloud',
+              status: p.status || 'Active'
+            })));
+          }
+
+          if (customersRes.data) {
+            setCustomers(customersRes.data.map(c => ({
+              id: c.customer_id,
+              name: c.name,
+              phone: c.phone,
+              address: c.address,
+              totalOrders: c.total_orders,
+              totalSpent: c.total_spent
+            })));
+          }
+        } catch (err) {
+          console.error('Error initializing data from Supabase:', err);
         }
       };
 
-      const loadSyncedData = async () => {
-        if (!supabase || !session?.user) return;
-        
-        // Load Synced Stats & Business Details
-        const { data: setts } = await supabase.from('settings').select('*').eq('user_id', session.user.id).maybeSingle();
-        if (setts) {
-          setWooStats(prev => ({
-            ...prev,
-            totalSales: setts.total_sales || 0,
-            orderCount: setts.order_count || 0,
-            avgOrderValue: setts.order_count > 0 ? setts.total_sales / setts.order_count : 0
-          }));
-          setBusinessDetails({
-            name: setts.business_name || '',
-            phone: setts.business_phone || '',
-            website: setts.business_website || ''
-          });
-          setWooConfig(prev => ({
-            ...prev,
-            url: setts.woo_url || prev.url,
-            key: setts.woo_key || prev.key,
-            secret: setts.woo_secret || prev.secret,
-            webhookSecret: setts.webhook_secret || prev.webhookSecret
-          }));
-        }
-
-        // Load Synced Orders
-        const { data: dbOrders } = await supabase.from('orders').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false }).limit(200);
-        if (dbOrders && dbOrders.length > 0) {
-          const syncedOrders = dbOrders.map(o => ({
-            id: o.order_id,
-            customer: o.customer_name,
-            phone: o.customer_phone,
-            address: o.customer_address,
-            productName: o.product_name,
-            productPrice: o.product_price,
-            deliveryCharge: o.delivery_charge,
-            amount: o.amount,
-            codAmount: o.cod_amount,
-            status: o.status,
-            date: o.order_date || new Date(o.created_at || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-            time: o.order_time || 'Cloud'
-          }));
-          setOrders(syncedOrders);
-        }
-
-        // Load Synced Products
-        const { data: dbProducts } = await supabase.from('products').select('*').eq('user_id', session.user.id).limit(200);
-        if (dbProducts && dbProducts.length > 0) {
-          const syncedProducts = dbProducts.map(p => ({
-            id: p.product_id,
-            name: p.name,
-            price: p.price,
-            stock: p.stock,
-            category: p.category || 'Cloud',
-            status: p.status || 'Active'
-          }));
-          setProducts(syncedProducts);
-        }
-
-        // Load Synced Customers
-        const { data: dbCustomers } = await supabase.from('customers').select('*').eq('user_id', session.user.id).limit(200);
-        if (dbCustomers && dbCustomers.length > 0) {
-          const syncedCustomers = dbCustomers.map(c => ({
-            id: c.customer_id,
-            name: c.name,
-            phone: c.phone,
-            address: c.address,
-            totalOrders: c.total_orders,
-            totalSpent: c.total_spent
-          }));
-          setCustomers(syncedCustomers);
-        }
-      };
-
-      loadSettings();
-      loadSyncedData();
-    } else {
+      initializeData();
+    } else if (!session) {
       // Clear state when no session
       setWooConfig({ url: '', key: '', secret: '', webhookSecret: '' });
+      setBusinessDetails({ name: '', phone: '', website: '' });
       setOrders([]);
       setProducts([]);
-      setWooStats({
-        totalSales: 0,
-        orderCount: 0,
-        avgOrderValue: 0
-      });
+      setCustomers([]);
+      setWooStats({ totalSales: 0, orderCount: 0, avgOrderValue: 0 });
     }
-  }, [session]);
+  }, [session, supabase]);
 
   // Handle data fetching when config changes
   useEffect(() => {
@@ -506,9 +491,8 @@ export default function App() {
     setIsConfigSaving(true);
     setConfigError(null);
     try {
-      // 1. Update Supabase
-      if (!supabase) throw new Error('Supabase client not initialized');
-      if (!session?.user) throw new Error('You must be logged in');
+      if (!supabase) throw new Error('Database not connected');
+      if (!session?.user) throw new Error('Not authenticated');
 
       const { error: dbError } = await supabase
         .from('settings')
@@ -524,28 +508,39 @@ export default function App() {
           updated_at: new Date().toISOString()
         }, { onConflict: 'user_id' });
 
-      if (dbError) throw dbError;
+      if (dbError) {
+        console.error('Supabase save error:', dbError);
+        throw new Error(`Database Error: ${dbError.message}. Make sure columns business_name, business_phone, business_website exist in settings table.`);
+      }
       
       setNotifications([
         {
           id: Date.now(),
-          title: 'Settings Saved',
-          message: 'Your account and business details have been updated.',
+          title: 'Success',
+          message: 'Saved successfully',
           time: 'Just now',
           read: false
         },
         ...notifications
       ]);
 
-      if (typeof setIsBackendConfigured === 'function') {
-        setIsBackendConfigured(true);
+      if (wooConfig.url && wooConfig.key && wooConfig.secret) {
+        getWooStats();
+        getWooProducts();
       }
-      
-      // Refresh data with newly saved config
-      getWooStats();
-      getWooProducts();
     } catch (error: any) {
+      console.error('Failed to save settings:', error);
       setConfigError(error.message || 'Failed to update configuration');
+      setNotifications([
+        {
+          id: Date.now(),
+          title: 'Save Error',
+          message: error.message,
+          time: 'Just now',
+          read: false
+        },
+        ...notifications
+      ]);
     } finally {
       setIsConfigSaving(false);
     }
