@@ -208,11 +208,24 @@ export default function App() {
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isBackendConfigured, setIsBackendConfigured] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
   const [wooStats, setWooStats] = useState({
     totalSales: 0,
     orderCount: 0,
     avgOrderValue: 0
   });
+
+  const [wooConfig, setWooConfig] = useState({
+    url: '',
+    key: '',
+    secret: '',
+    webhookSecret: ''
+  });
+
+  const [isConfigSaving, setIsConfigSaving] = useState(false);
+  const [showKeys, setShowKeys] = useState(false);
 
   // WooCommerce Status Mapper
   const mapWooStatus = (status: string) => {
@@ -225,16 +238,6 @@ export default function App() {
       default: return 'Pending';
     }
   };
-
-  const [wooConfig, setWooConfig] = useState({
-    url: '',
-    key: '',
-    secret: '',
-    webhookSecret: ''
-  });
-  const [isConfigSaving, setIsConfigSaving] = useState(false);
-  const [showKeys, setShowKeys] = useState(false);
-  const [configError, setConfigError] = useState<string | null>(null);
 
   const getWooStats = useCallback(async () => {
     if (!wooConfig.url || !wooConfig.key || !wooConfig.secret) return;
@@ -447,11 +450,42 @@ export default function App() {
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
 
   // New States for Functionality
-  const [currentView, setCurrentView] = useState<'dashboard' | 'orders' | 'products' | 'purchases' | 'customers' | 'settings' | 'profile'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'orders' | 'products' | 'purchases' | 'customers' | 'settings' | 'profile' | 'sync'>('dashboard');
   const [orders, setOrders] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [purchases, setPurchases] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+
+  // Supabase Data Persistence Functions
+  const syncOrderToSupabase = async (order: any) => {
+    if (!supabase || !session?.user) return;
+    try {
+      await supabase.from('orders').upsert({
+        user_id: session.user.id,
+        order_id: order.id,
+        customer_name: order.customer,
+        amount: order.amount,
+        status: order.status,
+      }, { onConflict: 'user_id, order_id' });
+    } catch (error) {
+      console.error('Failed to sync order to Supabase:', error);
+    }
+  };
+
+  const syncProductToSupabase = async (product: any) => {
+    if (!supabase || !session?.user) return;
+    try {
+      await supabase.from('products').upsert({
+        user_id: session.user.id,
+        product_id: product.id,
+        name: product.name,
+        price: product.price,
+        stock: product.stock,
+      }, { onConflict: 'user_id, product_id' });
+    } catch (error) {
+      console.error('Failed to sync product to Supabase:', error);
+    }
+  };
   
   // Clear localStorage once on mount if we want to "flush" it (optional, but requested "fresh" app)
   useEffect(() => {
@@ -990,6 +1024,23 @@ export default function App() {
 
   return (
     <div key={session.user.id} className="min-h-screen bg-brand-bg flex flex-col">
+      {/* Error Banners */}
+      <AnimatePresence>
+        {aiError && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-red-500 text-white text-[10px] font-bold text-center py-2 px-4 uppercase tracking-[0.2em] relative z-[200]"
+          >
+            {aiError}
+            <button onClick={() => setAiError(null)} className="absolute right-4 top-1/2 -translate-y-1/2 opacity-60 hover:opacity-100 transition-opacity">
+              &times;
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Add New Order Modal */}
       <AnimatePresence>
         {isAddNewModalOpen && (
@@ -2321,6 +2372,33 @@ export default function App() {
                       <span className="text-xs font-medium text-slate-600 block">
                         {session?.user?.last_sign_in_at ? new Date(session.user.last_sign_in_at).toLocaleString() : 'Just now'}
                       </span>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-8 p-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="p-3 bg-white rounded-xl shadow-sm">
+                          <RefreshCw size={24} className="text-blue-600" />
+                        </div>
+                        <div className="text-left">
+                          <h4 className="text-sm font-bold text-slate-800">Cloud Data Sync</h4>
+                          <p className="text-[10px] text-slate-500 font-medium">Backup your POS data to Supabase</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={async () => {
+                          setIsRefreshing(true);
+                          for (const order of orders) await syncOrderToSupabase(order);
+                          for (const product of products) await syncProductToSupabase(product);
+                          alert('Sync Completed!');
+                          setIsRefreshing(false);
+                        }}
+                        disabled={isRefreshing}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-blue-700 transition-colors active:scale-95 disabled:opacity-50"
+                      >
+                        {isRefreshing ? 'Syncing...' : 'Sync All Now'}
+                      </button>
                     </div>
                   </div>
                   

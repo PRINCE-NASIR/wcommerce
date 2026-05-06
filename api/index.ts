@@ -21,43 +21,32 @@ app.use(express.json({
   }
 }));
 
-// WooCommerce Configuration
-let WOO_URL = (process.env.WOOCOMMERCE_URL || process.env.VITE_WOOCOMMERCE_URL || '').trim().replace(/\/$/, '');
-let WOO_KEY = process.env.VITE_WOOCOMMERCE_KEY || process.env.WOOCOMMERCE_KEY;
-let WOO_SECRET = process.env.VITE_WOOCOMMERCE_SECRET || process.env.WOOCOMMERCE_SECRET;
-let WEBHOOK_SECRET = process.env.VITE_WOOCOMMERCE_WEBHOOK_SECRET || process.env.WOOCOMMERCE_WEBHOOK_SECRET;
-
-const getWooAuth = () => {
-  if (!WOO_KEY || !WOO_SECRET) return null;
-  return Buffer.from(`${WOO_KEY}:${WOO_SECRET}`).toString('base64');
-};
-
-// API to update configuration dynamically (volatile, for preview/demo)
-app.post('/api/config', (req, res) => {
-  const { url, key, secret, webhookSecret } = req.body;
-  if (url) WOO_URL = url.replace(/\/$/, '');
-  if (key) WOO_KEY = key;
-  if (secret) WOO_SECRET = secret;
-  if (webhookSecret) WEBHOOK_SECRET = webhookSecret;
+// Use a helper to get WooCommerce config from request headers or environment variables
+const getWooConfig = (req: express.Request) => {
+  const url = (req.headers['x-woo-url'] as string) || (process.env.WOOCOMMERCE_URL || process.env.VITE_WOOCOMMERCE_URL || '').trim();
+  const key = (req.headers['x-woo-key'] as string) || process.env.VITE_WOOCOMMERCE_KEY || process.env.WOOCOMMERCE_KEY;
+  const secret = (req.headers['x-woo-secret'] as string) || process.env.VITE_WOOCOMMERCE_SECRET || process.env.WOOCOMMERCE_SECRET;
   
-  res.json({ 
-    status: 'Updated', 
-    configured: !!(WOO_URL && WOO_KEY && WOO_SECRET) 
-  });
-});
+  if (!url || !key || !secret) return null;
+  
+  return {
+    url: url.replace(/\/$/, ''),
+    auth: Buffer.from(`${key}:${secret}`).toString('base64')
+  };
+};
 
 // API: Get Products
 app.get('/api/products', async (req, res) => {
   try {
-    const wooAuth = getWooAuth();
-    if (!WOO_URL || !wooAuth) {
+    const config = getWooConfig(req);
+    if (!config) {
       return res.status(401).json({ 
         error: 'WooCommerce not configured', 
-        details: 'Please log in and configure your WooCommerce URL and API Keys in the Settings tab.' 
+        details: 'Please configure your WooCommerce URL and API Keys in the Settings tab.' 
       });
     }
-    const response = await axios.get(`${WOO_URL}/wp-json/wc/v3/products?per_page=100`, {
-      headers: { Authorization: `Basic ${wooAuth}` }
+    const response = await axios.get(`${config.url}/wp-json/wc/v3/products?per_page=100`, {
+      headers: { Authorization: `Basic ${config.auth}` }
     });
     res.json(response.data);
   } catch (error: any) {
@@ -72,15 +61,15 @@ app.get('/api/products', async (req, res) => {
 // API: Delete Product
 app.delete('/api/products/:id', async (req, res) => {
   try {
-    const wooAuth = getWooAuth();
-    if (!WOO_URL || !wooAuth) {
+    const config = getWooConfig(req);
+    if (!config) {
       return res.status(401).json({ error: 'WooCommerce not configured' });
     }
     const { id } = req.params;
-    const cleanId = id.replace('PRD', ''); // Remove the UI prefix if present
+    const cleanId = id.replace('PRD', '');
     
-    const response = await axios.delete(`${WOO_URL}/wp-json/wc/v3/products/${cleanId}?force=true`, {
-      headers: { Authorization: `Basic ${wooAuth}` }
+    const response = await axios.delete(`${config.url}/wp-json/wc/v3/products/${cleanId}?force=true`, {
+      headers: { Authorization: `Basic ${config.auth}` }
     });
     res.json({ success: true, data: response.data });
   } catch (error: any) {
@@ -95,16 +84,15 @@ app.delete('/api/products/:id', async (req, res) => {
 // API: Get Stats
 app.get('/api/stats', async (req, res) => {
   try {
-    const wooAuth = getWooAuth();
-    if (!WOO_URL || !wooAuth) {
+    const config = getWooConfig(req);
+    if (!config) {
       return res.status(401).json({ 
         error: 'WooCommerce not configured',
-        details: 'Please log in and configure your WooCommerce URL and API Keys in the Settings tab.'
+        details: 'Please configure your WooCommerce URL and API Keys in the Settings tab.'
       });
     }
-    // Fetch recent completed orders to calculate stats
-    const response = await axios.get(`${WOO_URL}/wp-json/wc/v3/orders?per_page=100&status=completed,processing`, {
-      headers: { Authorization: `Basic ${wooAuth}` }
+    const response = await axios.get(`${config.url}/wp-json/wc/v3/orders?per_page=100&status=completed,processing`, {
+      headers: { Authorization: `Basic ${config.auth}` }
     });
     
     const orders = response.data;
@@ -116,13 +104,15 @@ app.get('/api/stats', async (req, res) => {
       totalSales,
       orderCount,
       avgOrderValue,
-      recentOrders: orders.slice(0, 5) // Return some to sync initial state
+      recentOrders: orders.slice(0, 5)
     });
   } catch (error: any) {
     console.error('WooCommerce Stats Error:', error.response?.status, error.response?.data || error.message);
     res.status(error.response?.status || 500).json({ error: 'Failed to fetch stats' });
   }
 });
+
+const WEBHOOK_SECRET = process.env.WOOCOMMERCE_WEBHOOK_SECRET || process.env.VITE_WOOCOMMERCE_WEBHOOK_SECRET;
 
 // API: Webhook Receiver
 app.post('/api/webhooks/orders', (req: any, res) => {

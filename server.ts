@@ -118,6 +118,8 @@ app.get('/api/stats', async (req, res) => {
 });
 
 
+const WEBHOOK_SECRET = process.env.WOOCOMMERCE_WEBHOOK_SECRET || process.env.VITE_WOOCOMMERCE_WEBHOOK_SECRET;
+
 // API: Webhook Receiver
 app.post('/api/webhooks/orders', (req: any, res) => {
   const signature = req.headers['x-wc-webhook-signature'];
@@ -146,6 +148,9 @@ app.post('/api/webhooks/orders', (req: any, res) => {
 async function startServer() {
   const PORT = 3000;
 
+  // API Routes listed first
+  app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -153,6 +158,13 @@ async function startServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+  } else {
+    // Standard static serving for production
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
@@ -160,9 +172,7 @@ async function startServer() {
   });
 }
 
-// Export app for Vercel
-export default app;
+// Start the server
+startServer();
 
-if (process.env.NODE_ENV !== 'production') {
-  startServer();
-}
+export default app;
