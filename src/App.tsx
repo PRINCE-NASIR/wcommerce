@@ -360,7 +360,7 @@ export default function App() {
         if (!supabase || !session?.user) return;
         
         // Load Synced Stats
-        const { data: setts } = await supabase.from('settings').select('total_sales, order_count').eq('user_id', session.user.id).single();
+        const { data: setts } = await supabase.from('settings').select('total_sales, order_count').eq('user_id', session.user.id).maybeSingle();
         if (setts) {
           setWooStats(prev => ({
             ...prev,
@@ -369,10 +369,10 @@ export default function App() {
           }));
         }
 
-        // Load Synced Orders
-        const { data: dbOrders } = await supabase.from('orders').select('*').eq('user_id', session.user.id).limit(10);
+        // Load Synced Orders (Increased limit to 100 for better persistence)
+        const { data: dbOrders } = await supabase.from('orders').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false }).limit(100);
         if (dbOrders && dbOrders.length > 0) {
-          setOrders(dbOrders.map(o => ({
+          const syncedOrders = dbOrders.map(o => ({
             id: o.order_id,
             customer: o.customer_name,
             amount: o.amount,
@@ -380,20 +380,22 @@ export default function App() {
             date: new Date(o.created_at || Date.now()).toLocaleDateString(),
             time: 'Synced',
             productName: 'Cloud Backup'
-          })));
+          }));
+          setOrders(syncedOrders);
         }
 
-        // Load Synced Products
-        const { data: dbProducts } = await supabase.from('products').select('*').eq('user_id', session.user.id).limit(10);
+        // Load Synced Products (Increased limit to 100)
+        const { data: dbProducts } = await supabase.from('products').select('*').eq('user_id', session.user.id).limit(100);
         if (dbProducts && dbProducts.length > 0) {
-          setProducts(dbProducts.map(p => ({
+          const syncedProducts = dbProducts.map(p => ({
             id: p.product_id,
             name: p.name,
             price: p.price,
             stock: p.stock,
             category: 'Synced',
             status: 'Cloud Backup'
-          })));
+          }));
+          setProducts(syncedProducts);
         }
       };
 
@@ -402,6 +404,13 @@ export default function App() {
     } else {
       // Clear state when no session
       setWooConfig({ url: '', key: '', secret: '', webhookSecret: '' });
+      setOrders([]);
+      setProducts([]);
+      setWooStats({
+        totalSales: 0,
+        orderCount: 0,
+        avgOrderValue: 0
+      });
     }
   }, [session]);
 
@@ -740,6 +749,10 @@ export default function App() {
     setProducts(products.filter(p => p.id !== productId));
 
     try {
+      if (supabase && session?.user) {
+        await supabase.from('products').delete().eq('user_id', session.user.id).eq('product_id', productId);
+      }
+      
       if (isBackendConfigured) {
         await axios.delete(`/api/products/${productId}`, {
           headers: {
@@ -916,6 +929,7 @@ export default function App() {
     if (!selectedOrder || !pendingStatus) return;
     
     const newStatus = pendingStatus;
+    const updatedOrder = { ...selectedOrder, status: newStatus };
     
     setOrders(prevOrders => prevOrders.map(o => 
       o.id === selectedOrder.id ? { ...o, status: newStatus } : o
@@ -923,6 +937,9 @@ export default function App() {
     
     setSelectedOrder(prev => prev ? { ...prev, status: newStatus } : null);
     setPendingStatus(null);
+    
+    // Auto-sync status change to Supabase
+    syncOrderToSupabase(updatedOrder);
     
     // Quick refresh animation to show it's saved
     setIsRefreshing(true);
