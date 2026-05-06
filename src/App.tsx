@@ -255,6 +255,19 @@ export default function App() {
           orderCount: response.data.orderCount,
           avgOrderValue: response.data.avgOrderValue
         });
+
+        // Auto-Sync Stats to Supabase
+        if (supabase && session?.user) {
+          supabase.from('settings')
+            .update({
+              total_sales: response.data.totalSales,
+              order_count: response.data.orderCount
+            })
+            .eq('user_id', session.user.id)
+            .then(({ error }) => {
+              if (error) console.error('Auto-sync stats failed:', error);
+            });
+        }
         
         if (response.data.recentOrders && Array.isArray(response.data.recentOrders)) {
           const mappedOrders = response.data.recentOrders.map((o: any) => ({
@@ -269,6 +282,9 @@ export default function App() {
             status: mapWooStatus(o.status)
           }));
           setOrders(mappedOrders);
+          
+          // Auto-Sync each order
+          mappedOrders.forEach(order => syncOrderToSupabase(order));
         }
         
         setIsBackendConfigured(true);
@@ -302,6 +318,10 @@ export default function App() {
           status: (p.stock_quantity || 0) > 10 ? 'In Stock' : (p.stock_quantity || 0) > 0 ? 'Low Stock' : 'Out of Stock'
         }));
         setProducts(mappedProducts);
+
+        // Auto-Sync each product
+        mappedProducts.forEach(product => syncProductToSupabase(product));
+        
         setIsBackendConfigured(true);
       }
     } catch (error: any) {
@@ -332,11 +352,53 @@ export default function App() {
             webhookSecret: data.webhook_secret || ''
           });
         } else {
-          // If no data found for this user, ensure fresh state
           setWooConfig({ url: '', key: '', secret: '', webhookSecret: '' });
         }
       };
+
+      const loadSyncedData = async () => {
+        if (!supabase || !session?.user) return;
+        
+        // Load Synced Stats
+        const { data: setts } = await supabase.from('settings').select('total_sales, order_count').eq('user_id', session.user.id).single();
+        if (setts) {
+          setWooStats(prev => ({
+            ...prev,
+            totalSales: setts.total_sales || 0,
+            orderCount: setts.order_count || 0
+          }));
+        }
+
+        // Load Synced Orders
+        const { data: dbOrders } = await supabase.from('orders').select('*').eq('user_id', session.user.id).limit(10);
+        if (dbOrders && dbOrders.length > 0) {
+          setOrders(dbOrders.map(o => ({
+            id: o.order_id,
+            customer: o.customer_name,
+            amount: o.amount,
+            status: o.status,
+            date: new Date(o.created_at || Date.now()).toLocaleDateString(),
+            time: 'Synced',
+            productName: 'Cloud Backup'
+          })));
+        }
+
+        // Load Synced Products
+        const { data: dbProducts } = await supabase.from('products').select('*').eq('user_id', session.user.id).limit(10);
+        if (dbProducts && dbProducts.length > 0) {
+          setProducts(dbProducts.map(p => ({
+            id: p.product_id,
+            name: p.name,
+            price: p.price,
+            stock: p.stock,
+            category: 'Synced',
+            status: 'Cloud Backup'
+          })));
+        }
+      };
+
       loadSettings();
+      loadSyncedData();
     } else {
       // Clear state when no session
       setWooConfig({ url: '', key: '', secret: '', webhookSecret: '' });
@@ -888,6 +950,7 @@ export default function App() {
       status: 'Pending'
     };
     setOrders([newOrder, ...orders]);
+    syncOrderToSupabase(newOrder);
     setNotifications([
       {
         id: Date.now(),
@@ -929,6 +992,7 @@ export default function App() {
     };
     
     setProducts([newProduct, ...products]);
+    syncProductToSupabase(newProduct);
     setIsProductModalOpen(false);
     setNewProductData({ name: '', category: '', price: '', stock: '' });
     setCurrentView('products');
@@ -2372,33 +2436,6 @@ export default function App() {
                       <span className="text-xs font-medium text-slate-600 block">
                         {session?.user?.last_sign_in_at ? new Date(session.user.last_sign_in_at).toLocaleString() : 'Just now'}
                       </span>
-                    </div>
-                  </div>
-                  
-                  <div className="mt-8 p-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-4">
-                        <div className="p-3 bg-white rounded-xl shadow-sm">
-                          <RefreshCw size={24} className="text-blue-600" />
-                        </div>
-                        <div className="text-left">
-                          <h4 className="text-sm font-bold text-slate-800">Cloud Data Sync</h4>
-                          <p className="text-[10px] text-slate-500 font-medium">Backup your POS data to Supabase</p>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={async () => {
-                          setIsRefreshing(true);
-                          for (const order of orders) await syncOrderToSupabase(order);
-                          for (const product of products) await syncProductToSupabase(product);
-                          alert('Sync Completed!');
-                          setIsRefreshing(false);
-                        }}
-                        disabled={isRefreshing}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-blue-700 transition-colors active:scale-95 disabled:opacity-50"
-                      >
-                        {isRefreshing ? 'Syncing...' : 'Sync All Now'}
-                      </button>
                     </div>
                   </div>
                   
