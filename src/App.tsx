@@ -227,6 +227,28 @@ export default function App() {
   const [isConfigSaving, setIsConfigSaving] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
 
+  // Auto-save settings to Supabase
+  useEffect(() => {
+    if (!session?.user || !supabase) return;
+    
+    const timer = setTimeout(async () => {
+      if (wooConfig.url || wooConfig.key || wooConfig.secret) {
+        await supabase
+          .from('settings')
+          .upsert({
+            user_id: session.user.id,
+            woo_url: wooConfig.url,
+            woo_key: wooConfig.key,
+            woo_secret: wooConfig.secret,
+            webhook_secret: wooConfig.webhookSecret,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'user_id' });
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [wooConfig, session, supabase]);
+
   // WooCommerce Status Mapper
   const mapWooStatus = (status: string) => {
     switch (status) {
@@ -259,11 +281,12 @@ export default function App() {
         // Auto-Sync Stats to Supabase
         if (supabase && session?.user) {
           supabase.from('settings')
-            .update({
+            .upsert({
+              user_id: session.user.id,
               total_sales: response.data.totalSales,
-              order_count: response.data.orderCount
-            })
-            .eq('user_id', session.user.id)
+              order_count: response.data.orderCount,
+              updated_at: new Date().toISOString()
+            }, { onConflict: 'user_id' })
             .then(({ error }) => {
               if (error) console.error('Auto-sync stats failed:', error);
             });
@@ -281,7 +304,15 @@ export default function App() {
             amount: parseFloat(o.total) || 0,
             status: mapWooStatus(o.status)
           }));
-          setOrders(mappedOrders);
+          setOrders(prev => {
+            const combined = [...mappedOrders];
+            prev.forEach(p => {
+              if (!combined.find(c => c.id === p.id)) {
+                combined.push(p);
+              }
+            });
+            return combined;
+          });
           
           // Auto-Sync each order
           mappedOrders.forEach(order => syncOrderToSupabase(order));
@@ -317,7 +348,15 @@ export default function App() {
           stock: p.stock_quantity || 0,
           status: (p.stock_quantity || 0) > 10 ? 'In Stock' : (p.stock_quantity || 0) > 0 ? 'Low Stock' : 'Out of Stock'
         }));
-        setProducts(mappedProducts);
+        setProducts(prev => {
+          const combined = [...mappedProducts];
+          prev.forEach(p => {
+            if (!combined.find(c => c.id === p.id)) {
+              combined.push(p);
+            }
+          });
+          return combined;
+        });
 
         // Auto-Sync each product
         mappedProducts.forEach(product => syncProductToSupabase(product));
@@ -342,7 +381,7 @@ export default function App() {
           .from('settings')
           .select('*')
           .eq('user_id', session.user.id)
-          .single();
+          .maybeSingle();
 
         if (data && !error) {
           setWooConfig({
@@ -351,8 +390,6 @@ export default function App() {
             secret: data.woo_secret || '',
             webhookSecret: data.webhook_secret || ''
           });
-        } else {
-          setWooConfig({ url: '', key: '', secret: '', webhookSecret: '' });
         }
       };
 
@@ -365,35 +402,41 @@ export default function App() {
           setWooStats(prev => ({
             ...prev,
             totalSales: setts.total_sales || 0,
-            orderCount: setts.order_count || 0
+            orderCount: setts.order_count || 0,
+            avgOrderValue: setts.order_count > 0 ? setts.total_sales / setts.order_count : 0
           }));
         }
 
-        // Load Synced Orders (Increased limit to 100 for better persistence)
-        const { data: dbOrders } = await supabase.from('orders').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false }).limit(100);
+        // Load Synced Orders
+        const { data: dbOrders } = await supabase.from('orders').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false }).limit(200);
         if (dbOrders && dbOrders.length > 0) {
           const syncedOrders = dbOrders.map(o => ({
             id: o.order_id,
             customer: o.customer_name,
+            phone: o.customer_phone,
+            address: o.customer_address,
+            productName: o.product_name,
+            productPrice: o.product_price,
+            deliveryCharge: o.delivery_charge,
             amount: o.amount,
+            codAmount: o.cod_amount,
             status: o.status,
-            date: new Date(o.created_at || Date.now()).toLocaleDateString(),
-            time: 'Synced',
-            productName: 'Cloud Backup'
+            date: o.order_date || new Date(o.created_at || Date.now()).toLocaleDateString(),
+            time: o.order_time || 'Cloud'
           }));
           setOrders(syncedOrders);
         }
 
-        // Load Synced Products (Increased limit to 100)
-        const { data: dbProducts } = await supabase.from('products').select('*').eq('user_id', session.user.id).limit(100);
+        // Load Synced Products
+        const { data: dbProducts } = await supabase.from('products').select('*').eq('user_id', session.user.id).limit(200);
         if (dbProducts && dbProducts.length > 0) {
           const syncedProducts = dbProducts.map(p => ({
             id: p.product_id,
             name: p.name,
             price: p.price,
             stock: p.stock,
-            category: 'Synced',
-            status: 'Cloud Backup'
+            category: p.category || 'Cloud',
+            status: p.status || 'Active'
           }));
           setProducts(syncedProducts);
         }
@@ -487,6 +530,20 @@ export default function App() {
         status: mapWooStatus(payload.status)
       };
 
+      syncOrderToSupabase(newOrder);
+      
+      // Update Stats in real-time
+      setWooStats(prev => {
+        const newCount = prev.orderCount + 1;
+        const newTotal = prev.totalSales + orderAmount;
+        syncStatsToSupabase(newTotal, newCount);
+        return {
+          orderCount: newCount,
+          totalSales: newTotal,
+          avgOrderValue: newTotal / newCount
+        };
+      });
+
       setOrders(prev => {
         // Prevent duplicates
         if (prev.some(o => o.id === newOrder.id)) return prev;
@@ -535,8 +592,16 @@ export default function App() {
         user_id: session.user.id,
         order_id: order.id,
         customer_name: order.customer,
+        customer_phone: order.phone,
+        customer_address: order.address,
+        product_name: order.productName,
+        product_price: order.productPrice,
+        delivery_charge: order.deliveryCharge,
         amount: order.amount,
+        cod_amount: order.codAmount,
         status: order.status,
+        order_date: order.date,
+        order_time: order.time
       }, { onConflict: 'user_id, order_id' });
     } catch (error) {
       console.error('Failed to sync order to Supabase:', error);
@@ -552,9 +617,25 @@ export default function App() {
         name: product.name,
         price: product.price,
         stock: product.stock,
+        category: product.category,
+        status: product.status
       }, { onConflict: 'user_id, product_id' });
     } catch (error) {
       console.error('Failed to sync product to Supabase:', error);
+    }
+  };
+
+  const syncStatsToSupabase = async (sales: number, count: number) => {
+    if (!supabase || !session?.user) return;
+    try {
+      await supabase.from('settings').upsert({
+        user_id: session.user.id,
+        total_sales: sales,
+        order_count: count,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' });
+    } catch (error) {
+      console.error('Failed to sync stats to Supabase:', error);
     }
   };
   
@@ -913,6 +994,25 @@ export default function App() {
     );
     
     setOrders(updatedOrders);
+    
+    // Auto-sync edit to Supabase
+    const updatedOrder = updatedOrders.find(o => o.id === selectedOrderForEdit.id);
+    if (updatedOrder) {
+      syncOrderToSupabase(updatedOrder);
+      
+      // Update stats if amount changed
+      const diff = totalAmount - (selectedOrderForEdit.amount || 0);
+      if (diff !== 0) {
+        const newSales = wooStats.totalSales + diff;
+        setWooStats(prev => ({
+          ...prev,
+          totalSales: newSales,
+          avgOrderValue: prev.orderCount > 0 ? newSales / prev.orderCount : 0
+        }));
+        syncStatsToSupabase(newSales, wooStats.orderCount);
+      }
+    }
+
     setSelectedOrderForEdit(null);
     setEditOrderData(null);
     if (selectedOrder?.id === selectedOrderForEdit.id) {
@@ -968,6 +1068,16 @@ export default function App() {
     };
     setOrders([newOrder, ...orders]);
     syncOrderToSupabase(newOrder);
+    
+    const newSales = wooStats.totalSales + totalAmount;
+    const newCount = wooStats.orderCount + 1;
+    setWooStats(prev => ({
+      ...prev,
+      totalSales: newSales,
+      orderCount: newCount,
+      avgOrderValue: newCount > 0 ? newSales / newCount : 0
+    }));
+    syncStatsToSupabase(newSales, newCount);
     setNotifications([
       {
         id: Date.now(),
