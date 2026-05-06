@@ -440,6 +440,20 @@ export default function App() {
           }));
           setProducts(syncedProducts);
         }
+
+        // Load Synced Customers
+        const { data: dbCustomers } = await supabase.from('customers').select('*').eq('user_id', session.user.id).limit(200);
+        if (dbCustomers && dbCustomers.length > 0) {
+          const syncedCustomers = dbCustomers.map(c => ({
+            id: c.customer_id,
+            name: c.name,
+            phone: c.phone,
+            address: c.address,
+            totalOrders: c.total_orders,
+            totalSpent: c.total_spent
+          }));
+          setCustomers(syncedCustomers);
+        }
       };
 
       loadSettings();
@@ -571,8 +585,152 @@ export default function App() {
     };
   }, [getWooProducts, getWooStats]);
 
+  // Supabase Real-time Subscription
+  useEffect(() => {
+    if (!supabase || !session?.user) return;
+
+    const ordersChannel = supabase
+      .channel('public:orders')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'orders',
+          filter: `user_id=eq.${session.user.id}`
+        },
+        (payload) => {
+          console.log('Supabase order change received:', payload);
+          if (payload.eventType === 'INSERT') {
+            const newOrder = {
+              id: payload.new.order_id,
+              customer: payload.new.customer_name,
+              phone: payload.new.customer_phone,
+              address: payload.new.customer_address,
+              productName: payload.new.product_name,
+              productPrice: payload.new.product_price,
+              deliveryCharge: payload.new.delivery_charge,
+              amount: payload.new.amount,
+              codAmount: payload.new.cod_amount,
+              status: payload.new.status,
+              date: payload.new.order_date || new Date(payload.new.created_at).toLocaleDateString(),
+              time: payload.new.order_time || 'Cloud'
+            };
+            setOrders(prev => {
+              if (prev.find(o => o.id === newOrder.id)) return prev;
+              return [newOrder, ...prev];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            setOrders(prev => prev.map(o => 
+              o.id === payload.new.order_id ? {
+                ...o,
+                status: payload.new.status,
+                amount: payload.new.amount,
+                customer: payload.new.customer_name
+              } : o
+            ));
+          } else if (payload.eventType === 'DELETE') {
+            setOrders(prev => prev.filter(o => o.id !== payload.old.order_id));
+          }
+        }
+      )
+      .subscribe();
+
+    const productsChannel = supabase
+      .channel('public:products')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'products',
+          filter: `user_id=eq.${session.user.id}`
+        },
+        (payload) => {
+          console.log('Supabase product change received:', payload);
+          if (payload.eventType === 'INSERT') {
+            const newProduct = {
+              id: payload.new.product_id,
+              name: payload.new.name,
+              price: payload.new.price,
+              stock: payload.new.stock,
+              category: payload.new.category,
+              status: payload.new.status
+            };
+            setProducts(prev => {
+              if (prev.find(p => p.id === newProduct.id)) return prev;
+              return [newProduct, ...prev];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            setProducts(prev => prev.map(p => 
+              p.id === payload.new.product_id ? {
+                ...p,
+                name: payload.new.name,
+                price: payload.new.price,
+                stock: payload.new.stock,
+                status: payload.new.status
+              } : p
+            ));
+          } else if (payload.eventType === 'DELETE') {
+            setProducts(prev => prev.filter(p => p.id !== payload.old.product_id));
+          }
+        }
+      )
+      .subscribe();
+
+    const customersChannel = supabase
+      .channel('public:customers')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'customers',
+          filter: `user_id=eq.${session.user.id}`
+        },
+        (payload) => {
+          console.log('Supabase customer change received:', payload);
+          if (payload.eventType === 'INSERT') {
+            const newCustomer = {
+              id: payload.new.customer_id,
+              name: payload.new.name,
+              phone: payload.new.phone,
+              address: payload.new.address,
+              totalOrders: payload.new.total_orders,
+              totalSpent: payload.new.total_spent
+            };
+            setCustomers(prev => {
+              if (prev.find(c => c.id === newCustomer.id)) return prev;
+              return [newCustomer, ...prev];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            setCustomers(prev => prev.map(c => 
+              c.id === payload.new.customer_id ? {
+                ...c,
+                name: payload.new.name,
+                phone: payload.new.phone,
+                address: payload.new.address,
+                totalOrders: payload.new.total_orders,
+                totalSpent: payload.new.total_spent
+              } : c
+            ));
+          } else if (payload.eventType === 'DELETE') {
+            setCustomers(prev => prev.filter(c => c.id !== payload.old.customer_id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ordersChannel);
+      supabase.removeChannel(productsChannel);
+      supabase.removeChannel(customersChannel);
+    };
+  }, [session, supabase]);
+
   const [notifications, setNotifications] = useState<{id: number, title: string, message: string, time: string, read: boolean, orderId?: string}[]>([]);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
@@ -586,9 +744,13 @@ export default function App() {
 
   // Supabase Data Persistence Functions
   const syncOrderToSupabase = async (order: any) => {
-    if (!supabase || !session?.user) return;
+    if (!supabase || !session?.user) {
+      console.warn('Sync ignored: Supabase or Session missing');
+      return;
+    }
     try {
-      await supabase.from('orders').upsert({
+      console.log('Syncing order to Supabase:', order.id);
+      const { error } = await supabase.from('orders').upsert({
         user_id: session.user.id,
         order_id: order.id,
         customer_name: order.customer,
@@ -601,27 +763,67 @@ export default function App() {
         cod_amount: order.codAmount,
         status: order.status,
         order_date: order.date,
-        order_time: order.time
+        order_time: order.time,
+        updated_at: new Date().toISOString()
       }, { onConflict: 'user_id, order_id' });
+
+      if (error) {
+        console.error('Supabase Order Sync Error:', error);
+      } else {
+        console.log('Order synced successfully:', order.id);
+      }
     } catch (error) {
-      console.error('Failed to sync order to Supabase:', error);
+      console.error('Failed to sync order to Supabase (catch):', error);
     }
   };
 
   const syncProductToSupabase = async (product: any) => {
     if (!supabase || !session?.user) return;
     try {
-      await supabase.from('products').upsert({
+      console.log('Syncing product to Supabase:', product.id);
+      const { error } = await supabase.from('products').upsert({
         user_id: session.user.id,
         product_id: product.id,
         name: product.name,
         price: product.price,
         stock: product.stock,
         category: product.category,
-        status: product.status
+        status: product.status,
+        updated_at: new Date().toISOString()
       }, { onConflict: 'user_id, product_id' });
+
+      if (error) {
+        console.error('Supabase Product Sync Error:', error);
+      } else {
+        console.log('Product synced successfully:', product.id);
+      }
     } catch (error) {
-      console.error('Failed to sync product to Supabase:', error);
+      console.error('Failed to sync product to Supabase (catch):', error);
+    }
+  };
+
+  const syncCustomerToSupabase = async (customer: any) => {
+    if (!supabase || !session?.user) return;
+    try {
+      console.log('Syncing customer to Supabase:', customer.id);
+      const { error } = await supabase.from('customers').upsert({
+        user_id: session.user.id,
+        customer_id: customer.id,
+        name: customer.name || 'New Customer',
+        phone: customer.phone,
+        address: customer.address,
+        total_orders: customer.totalOrders || 0,
+        total_spent: customer.totalSpent || 0,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id, customer_id' });
+
+      if (error) {
+        console.error('Supabase Customer Sync Error:', error);
+      } else {
+        console.log('Customer synced successfully:', customer.id);
+      }
+    } catch (error) {
+      console.error('Failed to sync customer to Supabase (catch):', error);
     }
   };
 
@@ -752,7 +954,20 @@ export default function App() {
     };
 
     setCustomers([newCustomer, ...customers]);
+    syncCustomerToSupabase(newCustomer);
     setOrders([newOrder, ...orders]);
+    syncOrderToSupabase(newOrder);
+
+    // Update global stats
+    const newSales = wooStats.totalSales + totalAmount;
+    const newCount = wooStats.orderCount + 1;
+    setWooStats(prev => ({
+      ...prev,
+      totalSales: newSales,
+      orderCount: newCount,
+      avgOrderValue: newCount > 0 ? newSales / newCount : 0
+    }));
+    syncStatsToSupabase(newSales, newCount);
     setNotifications([
       {
         id: Date.now(),
@@ -777,6 +992,44 @@ export default function App() {
     setStatusFilter(null);
     setSearchQuery('');
     setCurrentView('orders');
+  };
+
+  const handleDeleteOrder = async (orderId: string) => {
+    if (!window.confirm('Are you sure you want to delete this order?')) return;
+    
+    setOrders(prev => prev.filter(o => o.id !== orderId));
+    
+    try {
+      if (supabase && session?.user) {
+        await supabase.from('orders').delete().eq('user_id', session.user.id).eq('order_id', orderId);
+      }
+      setNotifications([
+        {
+          id: Date.now(),
+          title: 'Order Deleted',
+          message: `Order ${orderId} has been removed.`,
+          time: 'Just now',
+          read: false
+        },
+        ...notifications
+      ]);
+    } catch (error) {
+      console.error('Failed to delete order from Supabase:', error);
+    }
+  };
+
+  const handleDeleteCustomer = async (customerId: string) => {
+    if (!window.confirm('Are you sure you want to delete this customer?')) return;
+    
+    setCustomers(prev => prev.filter(c => c.id !== customerId));
+    
+    try {
+      if (supabase && session?.user) {
+        await supabase.from('customers').delete().eq('user_id', session.user.id).eq('customer_id', customerId);
+      }
+    } catch (error) {
+      console.error('Failed to delete customer from Supabase:', error);
+    }
   };
 
   const toggleSidebar = () => setSidebarOpen(!isSidebarOpen);
@@ -2994,9 +3247,20 @@ export default function App() {
                       </td>
                       <td className="px-6 py-4 text-slate-500 font-medium text-xs">{customer.address}</td>
                       <td className="px-6 py-4 text-right">
-                        <div className="inline-flex flex-col items-end">
-                          <span className="text-xs font-bold text-slate-800">{customer.totalOrders} Orders</span>
-                          <span className="text-[10px] font-bold text-blue-600">৳ {customer.totalSpent.toLocaleString()}</span>
+                        <div className="flex items-center justify-end gap-3">
+                          <div className="inline-flex flex-col items-end">
+                            <span className="text-xs font-bold text-slate-800">{customer.totalOrders} Orders</span>
+                            <span className="text-[10px] font-bold text-blue-600">৳ {customer.totalSpent.toLocaleString()}</span>
+                          </div>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteCustomer(customer.id);
+                            }}
+                            className="p-1 hover:bg-red-50 rounded-md text-slate-400 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                       </td>
                     </motion.tr>
@@ -3079,6 +3343,15 @@ export default function App() {
                               className="p-1 hover:bg-slate-100 rounded-md text-slate-400 hover:text-blue-600 transition-colors opacity-0 group-hover:opacity-100"
                             >
                               <Edit size={14} />
+                            </button>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteOrder(order.id);
+                              }}
+                              className="p-1 hover:bg-red-50 rounded-md text-slate-400 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100"
+                            >
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         </td>
