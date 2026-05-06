@@ -510,7 +510,11 @@ export default function App() {
 
       if (dbError) {
         console.error('Supabase save error:', dbError);
-        throw new Error(`Database Error: ${dbError.message}. Make sure columns business_name, business_phone, business_website exist in settings table.`);
+        let errorMsg = dbError.message;
+        if (errorMsg.includes('column') && errorMsg.includes('not found')) {
+          errorMsg = "Database columns missing. Please run the SQL command provided in the chat to add 'business_name', 'business_phone', and 'business_website' to your settings table.";
+        }
+        throw new Error(errorMsg);
       }
       
       setNotifications([
