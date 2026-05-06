@@ -34,9 +34,18 @@ export default function Auth() {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { error, data } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
-        alert('Check your email for the confirmation link!');
+        
+        // If session was immediately created (no email verification)
+        if (data?.session) {
+          // App.tsx will handle the redirect
+        } else {
+          alert('Check your email for the confirmation link! Your new account is created.');
+          setEmail('');
+          setPassword('');
+          setIsLogin(true);
+        }
       }
     } catch (err: any) {
       let message = err.message;
@@ -105,6 +114,7 @@ export default function Auth() {
                   type="email"
                   required
                   placeholder="name@example.com"
+                  autoComplete="username"
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all pl-11"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -120,6 +130,7 @@ export default function Auth() {
                   type={showPassword ? "text" : "password"}
                   required
                   placeholder="••••••••"
+                  autoComplete={isLogin ? "current-password" : "new-password"}
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all pl-11 pr-11"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}

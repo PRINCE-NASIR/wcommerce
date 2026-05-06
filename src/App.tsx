@@ -43,6 +43,7 @@ import {
   ShieldCheck,
   Key,
   LogIn,
+  LogOut,
   AlertCircle,
   Trash2
 } from 'lucide-react';
@@ -183,6 +184,18 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      // Reset state on logout
+      if (!session) {
+        setWooConfig({ url: '', key: '', secret: '', webhookSecret: '' });
+        setWooStats({ totalSales: 0, orderCount: 0, avgOrderValue: 0 });
+        setOrders([]);
+        setProducts([]);
+        setPurchases([]);
+        setCustomers([]);
+        setNotifications([]);
+        setIsBackendConfigured(false);
+        localStorage.clear(); // Important: Clear all cached data
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -224,15 +237,37 @@ export default function App() {
   const [configError, setConfigError] = useState<string | null>(null);
 
   const getWooStats = useCallback(async () => {
-    if (!isBackendConfigured && !wooConfig.url) return;
+    if (!wooConfig.url || !wooConfig.key || !wooConfig.secret) return;
     try {
-      const response = await axios.get('/api/stats');
+      const response = await axios.get('/api/stats', {
+        headers: {
+          'x-woo-url': wooConfig.url,
+          'x-woo-key': wooConfig.key,
+          'x-woo-secret': wooConfig.secret
+        }
+      });
       if (response.data) {
         setWooStats({
           totalSales: response.data.totalSales,
           orderCount: response.data.orderCount,
           avgOrderValue: response.data.avgOrderValue
         });
+        
+        if (response.data.recentOrders && Array.isArray(response.data.recentOrders)) {
+          const mappedOrders = response.data.recentOrders.map((o: any) => ({
+            id: `#ORD-${o.id}`,
+            date: new Date(o.date_created).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+            time: new Date(o.date_created).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            customer: `${o.billing.first_name} ${o.billing.last_name}`,
+            phone: o.billing.phone,
+            address: `${o.billing.city}, ${o.billing.state}`,
+            productName: o.line_items?.[0]?.name || 'WooCommerce Order',
+            amount: parseFloat(o.total) || 0,
+            status: mapWooStatus(o.status)
+          }));
+          setOrders(mappedOrders);
+        }
+        
         setIsBackendConfigured(true);
       }
     } catch (error: any) {
@@ -242,12 +277,18 @@ export default function App() {
         console.error('Failed to fetch stats:', error);
       }
     }
-  }, [isBackendConfigured, wooConfig.url]);
+  }, [wooConfig]);
 
   const getWooProducts = useCallback(async () => {
-    if (!isBackendConfigured && !wooConfig.url) return;
+    if (!wooConfig.url || !wooConfig.key || !wooConfig.secret) return;
     try {
-      const response = await axios.get('/api/products');
+      const response = await axios.get('/api/products', {
+        headers: {
+          'x-woo-url': wooConfig.url,
+          'x-woo-key': wooConfig.key,
+          'x-woo-secret': wooConfig.secret
+        }
+      });
       if (response.data && Array.isArray(response.data)) {
         const mappedProducts = response.data.map((p: any) => ({
           id: `PRD${p.id}`,
@@ -267,7 +308,7 @@ export default function App() {
         console.error('Failed to fetch products:', error);
       }
     }
-  }, [isBackendConfigured, wooConfig.url]);
+  }, [wooConfig]);
 
   // Fetch settings from Supabase on mount/auth
   useEffect(() => {
@@ -287,25 +328,25 @@ export default function App() {
             secret: data.woo_secret || '',
             webhookSecret: data.webhook_secret || ''
           });
-          
-          // Sync server-side volatile state with persisted state
-          axios.post('/api/config', {
-            url: data.woo_url,
-            key: data.woo_key,
-            secret: data.woo_secret,
-            webhookSecret: data.webhook_secret
-          }).then(res => {
-            if (res.data.configured) {
-              setIsBackendConfigured(true);
-              getWooStats();
-              getWooProducts();
-            }
-          });
+        } else {
+          // If no data found for this user, ensure fresh state
+          setWooConfig({ url: '', key: '', secret: '', webhookSecret: '' });
         }
       };
       loadSettings();
+    } else {
+      // Clear state when no session
+      setWooConfig({ url: '', key: '', secret: '', webhookSecret: '' });
     }
-  }, [session, getWooStats, getWooProducts]);
+  }, [session]);
+
+  // Handle data fetching when config changes
+  useEffect(() => {
+    if (wooConfig.url && wooConfig.key && wooConfig.secret) {
+      getWooStats();
+      getWooProducts();
+    }
+  }, [wooConfig, getWooStats, getWooProducts]);
 
   const saveWooConfig = async () => {
     setIsConfigSaving(true);
@@ -313,6 +354,8 @@ export default function App() {
     try {
       // 1. Update Supabase
       if (!supabase) throw new Error('Supabase client not initialized');
+      if (!session?.user) throw new Error('You must be logged in');
+
       const { error: dbError } = await supabase
         .from('settings')
         .upsert({
@@ -325,21 +368,18 @@ export default function App() {
         }, { onConflict: 'user_id' });
 
       if (dbError) throw dbError;
-
-      // 2. Update Express Server state
-      const response = await axios.post('/api/config', wooConfig);
-      if (response.data.configured) {
-        setIsBackendConfigured(true);
-        // Refresh data
-        getWooStats();
-        getWooProducts();
-      }
+      
+      setIsBackendConfigured(true);
+      // Refresh data with newly saved config
+      getWooStats();
+      getWooProducts();
     } catch (error: any) {
       setConfigError(error.message || 'Failed to update configuration');
     } finally {
       setIsConfigSaving(false);
     }
   };
+
 
   // Real-time Socket Connection
   useEffect(() => {
@@ -407,7 +447,7 @@ export default function App() {
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
 
   // New States for Functionality
-  const [currentView, setCurrentView] = useState<'dashboard' | 'orders' | 'products' | 'purchases' | 'customers' | 'settings'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'orders' | 'products' | 'purchases' | 'customers' | 'settings' | 'profile'>('dashboard');
   const [orders, setOrders] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [purchases, setPurchases] = useState<any[]>([]);
@@ -605,7 +645,13 @@ export default function App() {
 
     try {
       if (isBackendConfigured) {
-        await axios.delete(`/api/products/${productId}`);
+        await axios.delete(`/api/products/${productId}`, {
+          headers: {
+            'x-woo-url': wooConfig.url,
+            'x-woo-key': wooConfig.key,
+            'x-woo-secret': wooConfig.secret
+          }
+        });
       }
       setNotifications([
         {
@@ -907,6 +953,7 @@ export default function App() {
 
   const handleLogout = async () => {
     if (supabase) {
+      localStorage.clear();
       await supabase.auth.signOut();
     }
   };
@@ -942,7 +989,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-brand-bg flex flex-col">
+    <div key={session.user.id} className="min-h-screen bg-brand-bg flex flex-col">
       {/* Add New Order Modal */}
       <AnimatePresence>
         {isAddNewModalOpen && (
@@ -2093,7 +2140,21 @@ export default function App() {
                   hasDropdown 
                   isOpen={openMenus['accounts']} 
                   onClick={() => toggleMenu('accounts')}
-                />
+                >
+                  <div 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCurrentView('profile');
+                      setSidebarOpen(false);
+                    }}
+                    className={cn(
+                      "text-xs py-1.5 px-3 rounded-md transition-colors",
+                      currentView === 'profile' ? "bg-blue-50 text-blue-600 font-bold" : "text-slate-400 hover:text-blue-600 hover:bg-slate-100/50"
+                    )}
+                  >
+                    Profile
+                  </div>
+                </SidebarItem>
                 <SidebarItem 
                   icon={BarChart3} 
                   label="Reports" 
@@ -2145,6 +2206,7 @@ export default function App() {
              currentView === 'products' ? 'Inventory Management' : 
              currentView === 'settings' ? 'API Settings' :
              currentView === 'sync' ? 'Sync Dashboard' :
+             currentView === 'profile' ? 'User Profile' :
              'Expenditure & Purchases'}
           </h1>
           <div className="flex items-center space-x-3">
@@ -2233,6 +2295,49 @@ export default function App() {
             </button>
           </div>
         </div>
+
+        {currentView === 'profile' && (
+          <div className="max-w-3xl mx-auto space-y-6 pb-20">
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-xl shadow-slate-200/50 overflow-hidden">
+              <div className="p-8 text-center sm:text-left">
+                <div className="flex flex-col sm:flex-row items-center gap-6 mb-8">
+                  <div className="w-20 h-20 bg-blue-100 rounded-2xl flex items-center justify-center text-blue-600 shrink-0">
+                    <Users size={32} />
+                  </div>
+                  <div className="overflow-hidden w-full">
+                    <h3 className="text-xl font-bold text-slate-800 break-all">{session?.user?.email}</h3>
+                    <p className="text-sm text-slate-500 font-medium tracking-wide">Store Administrator</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4 pt-6 border-t border-slate-50">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">User ID</span>
+                      <span className="text-xs font-mono text-slate-600 block truncate" title={session?.user?.id}>{session?.user?.id}</span>
+                    </div>
+                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Last Login</span>
+                      <span className="text-xs font-medium text-slate-600 block">
+                        {session?.user?.last_sign_in_at ? new Date(session.user.last_sign_in_at).toLocaleString() : 'Just now'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-8 flex justify-center sm:justify-end">
+                    <button 
+                      onClick={handleLogout}
+                      className="flex items-center gap-2 px-6 py-2.5 bg-red-50 text-red-600 rounded-xl text-xs font-bold hover:bg-red-100 transition-colors uppercase tracking-widest active:scale-95"
+                    >
+                      <LogOut size={16} />
+                      Sign Out
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {currentView === 'dashboard' && (
           <>
@@ -2663,7 +2768,7 @@ export default function App() {
               </table>
             </div>
           </div>
-        ) : (
+        ) : (currentView === 'orders' || currentView === 'dashboard') ? (
           /* Recent Orders Table */
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
@@ -2746,7 +2851,7 @@ export default function App() {
               </table>
             </div>
           </div>
-        )}
+        ) : null}
 
         {currentView === 'dashboard' && (
           /* Bottom Section (Learning Center) as seen in image_2 */
