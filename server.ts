@@ -28,14 +28,27 @@ app.use(express.json({
 
 // Use a helper to get WooCommerce config from request headers or environment variables
 const getWooConfig = (req: express.Request) => {
-  const url = (req.headers['x-woo-url'] as string) || (process.env.WOOCOMMERCE_URL || process.env.VITE_WOOCOMMERCE_URL || '').trim();
+  const rawUrl = (req.headers['x-woo-url'] as string) || (process.env.WOOCOMMERCE_URL || process.env.VITE_WOOCOMMERCE_URL || '').trim();
   const key = (req.headers['x-woo-key'] as string) || process.env.VITE_WOOCOMMERCE_KEY || process.env.WOOCOMMERCE_KEY;
   const secret = (req.headers['x-woo-secret'] as string) || process.env.VITE_WOOCOMMERCE_SECRET || process.env.WOOCOMMERCE_SECRET;
   
-  if (!url || !key || !secret) return null;
+  if (!rawUrl || !key || !secret) return null;
+
+  // Normalize URL
+  let url = rawUrl.trim().replace(/\/$/, '');
+  if (url && !url.startsWith('http')) {
+    url = `https://${url}`;
+  }
+  
+  try {
+    new URL(url); // Validate URL format
+  } catch (e) {
+    console.error('Malformed WooCommerce URL:', url);
+    return null;
+  }
   
   return {
-    url: url.replace(/\/$/, ''),
+    url,
     auth: Buffer.from(`${key}:${secret}`).toString('base64')
   };
 };
@@ -47,18 +60,21 @@ app.get('/api/products', async (req, res) => {
     if (!config) {
       return res.status(401).json({ 
         error: 'WooCommerce not configured', 
-        details: 'Please configure your WooCommerce URL and API Keys in the Settings tab.' 
+        details: 'Invalid or missing WooCommerce URL and API Keys. Use https://yourdomain.com format.' 
       });
     }
     const response = await axios.get(`${config.url}/wp-json/wc/v3/products?per_page=100`, {
-      headers: { Authorization: `Basic ${config.auth}` }
+      headers: { Authorization: `Basic ${config.auth}` },
+      timeout: 10000
     });
     res.json(response.data);
   } catch (error: any) {
-    console.error('WooCommerce API Error (Products):', error.response?.status, error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({ 
+    const status = error.response?.status || 500;
+    const message = error.response?.data?.message || error.message;
+    console.error(`WooCommerce API Error (Products) [${status}]:`, message);
+    res.status(status).json({ 
       error: 'Failed to fetch products',
-      details: error.response?.data?.message || error.message 
+      details: message 
     });
   }
 });
@@ -68,20 +84,26 @@ app.delete('/api/products/:id', async (req, res) => {
   try {
     const config = getWooConfig(req);
     if (!config) {
-      return res.status(401).json({ error: 'WooCommerce not configured' });
+      return res.status(401).json({ 
+        error: 'WooCommerce not configured',
+        details: 'Invalid or missing WooCommerce URL and API Keys.'
+      });
     }
     const { id } = req.params;
     const cleanId = id.replace('PRD', '');
     
     const response = await axios.delete(`${config.url}/wp-json/wc/v3/products/${cleanId}?force=true`, {
-      headers: { Authorization: `Basic ${config.auth}` }
+      headers: { Authorization: `Basic ${config.auth}` },
+      timeout: 10000
     });
     res.json({ success: true, data: response.data });
   } catch (error: any) {
-    console.error('WooCommerce API Error (Delete Product):', error.response?.status, error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({ 
+    const status = error.response?.status || 500;
+    const message = error.response?.data?.message || error.message;
+    console.error(`WooCommerce API Error (Delete Product) [${status}]:`, message);
+    res.status(status).json({ 
       error: 'Failed to delete product',
-      details: error.response?.data?.message || error.message 
+      details: message 
     });
   }
 });
@@ -93,11 +115,12 @@ app.get('/api/stats', async (req, res) => {
     if (!config) {
       return res.status(401).json({ 
         error: 'WooCommerce not configured',
-        details: 'Please configure your WooCommerce URL and API Keys in the Settings tab.'
+        details: 'Invalid or missing WooCommerce URL and API Keys. Use https://yourdomain.com format.'
       });
     }
     const response = await axios.get(`${config.url}/wp-json/wc/v3/orders?per_page=100&status=completed,processing`, {
-      headers: { Authorization: `Basic ${config.auth}` }
+      headers: { Authorization: `Basic ${config.auth}` },
+      timeout: 10000
     });
     
     const orders = response.data;
@@ -112,11 +135,41 @@ app.get('/api/stats', async (req, res) => {
       recentOrders: orders.slice(0, 5)
     });
   } catch (error: any) {
-    console.error('WooCommerce Stats Error:', error.response?.status, error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({ error: 'Failed to fetch stats' });
+    const status = error.response?.status || 500;
+    const message = error.response?.data?.message || error.message;
+    console.error(`WooCommerce Stats Error [${status}]:`, message);
+    res.status(status).json({ 
+      error: 'Failed to fetch stats',
+      details: message
+    });
   }
 });
 
+// API: Get Categories
+app.get('/api/categories', async (req, res) => {
+  try {
+    const config = getWooConfig(req);
+    if (!config) {
+      return res.status(401).json({ 
+        error: 'WooCommerce not configured',
+        details: 'Invalid or missing WooCommerce URL and API Keys. Use https://yourdomain.com format.'
+      });
+    }
+    const response = await axios.get(`${config.url}/wp-json/wc/v3/products/categories?per_page=100`, {
+      headers: { Authorization: `Basic ${config.auth}` },
+      timeout: 10000
+    });
+    res.json(response.data);
+  } catch (error: any) {
+    const status = error.response?.status || 500;
+    const message = error.response?.data?.message || error.message;
+    console.error(`WooCommerce API Error (Categories) [${status}]:`, message);
+    res.status(status).json({ 
+      error: 'Failed to fetch categories',
+      details: message 
+    });
+  }
+});
 
 const WEBHOOK_SECRET = process.env.WOOCOMMERCE_WEBHOOK_SECRET || process.env.VITE_WOOCOMMERCE_WEBHOOK_SECRET;
 

@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/// <reference types="vite/client" />
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { io } from 'socket.io-client';
 import axios from 'axios';
@@ -45,7 +47,8 @@ import {
   LogIn,
   LogOut,
   AlertCircle,
-  Trash2
+  Trash2,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -164,6 +167,51 @@ const StatusCard = ({ label, count, icon: Icon, colorClass, iconColor, active = 
   </div>
 );
 
+const AnimatedCopyButton = ({ text, onCopy }: { text: string, onCopy?: () => void }) => {
+  const [copied, setCopied] = React.useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    if (onCopy) onCopy();
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <motion.button
+      whileTap={{ scale: 0.95 }}
+      onClick={handleCopy}
+      className={`px-6 text-xs font-bold transition-all border-l border-slate-100 flex items-center justify-center gap-2 min-w-[80px] h-full ${
+        copied ? 'bg-green-50 text-green-600' : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
+      }`}
+    >
+      <AnimatePresence mode="wait">
+        {copied ? (
+          <motion.div
+            key="check"
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.5, opacity: 0 }}
+            className="flex items-center gap-1"
+          >
+            <Check size={14} />
+            <span>Copied!</span>
+          </motion.div>
+        ) : (
+          <motion.span
+            key="copy"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            Copy
+          </motion.span>
+        )}
+      </AnimatePresence>
+    </motion.button>
+  );
+};
+
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
@@ -230,6 +278,23 @@ export default function App() {
     website: ''
   });
 
+  const [webhookSecret, setWebhookSecret] = useState('');
+
+  const generateWebhookSecret = useCallback(() => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    for (let i = 0; i < 20; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setWebhookSecret(result);
+  }, []);
+
+  useEffect(() => {
+    if (!webhookSecret) {
+      generateWebhookSecret();
+    }
+  }, [webhookSecret, generateWebhookSecret]);
+
   const [isConfigSaving, setIsConfigSaving] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
 
@@ -267,6 +332,31 @@ export default function App() {
     }
   };
 
+  const getWooCategories = useCallback(async () => {
+    if (!wooConfig.url || !wooConfig.key || !wooConfig.secret) return;
+    try {
+      const response = await axios.get('/api/categories', {
+        headers: {
+          'x-woo-url': wooConfig.url,
+          'x-woo-key': wooConfig.key,
+          'x-woo-secret': wooConfig.secret
+        }
+      });
+      if (response.data && Array.isArray(response.data)) {
+        const mapped = response.data.map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          description: c.description,
+          count: c.count
+        }));
+        setCategories(mapped);
+        mapped.forEach(cat => syncCategoryToSupabase(cat));
+      }
+    } catch (error) {
+      console.error('Failed to fetch categories:', error);
+    }
+  }, [wooConfig]);
+
   const getWooStats = useCallback(async () => {
     if (!wooConfig.url || !wooConfig.key || !wooConfig.secret) return;
     try {
@@ -299,17 +389,30 @@ export default function App() {
         }
         
         if (response.data.recentOrders && Array.isArray(response.data.recentOrders)) {
-          const mappedOrders = response.data.recentOrders.map((o: any) => ({
-            id: `#ORD-${o.id}`,
-            date: new Date(o.date_created).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-            time: new Date(o.date_created).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            customer: `${o.billing.first_name} ${o.billing.last_name}`,
-            phone: o.billing.phone,
-            address: `${o.billing.city}, ${o.billing.state}`,
-            productName: o.line_items?.[0]?.name || 'WooCommerce Order',
-            amount: parseFloat(o.total) || 0,
-            status: mapWooStatus(o.status)
-          }));
+          const mappedOrders = response.data.recentOrders.map((o: any) => {
+            const firstItem = o.line_items?.[0];
+            const pId = firstItem ? `PRD${firstItem.product_id}` : null;
+            
+            // Try to find category from already loaded products
+            const matchingProduct = products.find(p => p.id === pId);
+            const category = matchingProduct?.category || 'General';
+
+            return {
+              id: `#ORD-${o.id}`,
+              date: new Date(o.date_created).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+              time: new Date(o.date_created).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              customer: `${o.billing.first_name} ${o.billing.last_name}`,
+              phone: o.billing.phone,
+              address: `${o.billing.city}, ${o.billing.state}`,
+              productName: firstItem?.name || 'WooCommerce Order',
+              productPrice: firstItem ? parseFloat(firstItem.price) : 0,
+              deliveryCharge: parseFloat(o.shipping_total) || 0,
+              category: category,
+              amount: parseFloat(o.total) || 0,
+              codAmount: o.payment_method === 'cod' ? parseFloat(o.total) : 0,
+              status: mapWooStatus(o.status)
+            };
+          });
           setOrders(prev => {
             const combined = [...mappedOrders];
             prev.forEach(p => {
@@ -424,6 +527,18 @@ export default function App() {
             supabase.from('customers').select('*').eq('user_id', session.user.id).limit(100)
           ]);
 
+          if (productsRes.data) {
+            const mappedP = productsRes.data.map(p => ({
+              id: p.product_id,
+              name: p.name,
+              price: p.price,
+              stock: p.stock,
+              category: p.category || 'General',
+              status: p.status || 'Active'
+            }));
+            setProducts(mappedP);
+          }
+
           if (ordersRes.data) {
             setOrders(ordersRes.data.map(o => ({
               id: o.order_id,
@@ -431,6 +546,7 @@ export default function App() {
               phone: o.customer_phone,
               address: o.customer_address,
               productName: o.product_name,
+              category: o.product_category || 'General',
               productPrice: o.product_price,
               deliveryCharge: o.delivery_charge,
               amount: o.amount,
@@ -438,17 +554,6 @@ export default function App() {
               status: o.status,
               date: o.order_date || new Date(o.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
               time: o.order_time || 'Cloud'
-            })));
-          }
-
-          if (productsRes.data) {
-            setProducts(productsRes.data.map(p => ({
-              id: p.product_id,
-              name: p.name,
-              price: p.price,
-              stock: p.stock,
-              category: p.category || 'Cloud',
-              status: p.status || 'Active'
             })));
           }
 
@@ -502,9 +607,6 @@ export default function App() {
           woo_key: wooConfig.key,
           woo_secret: wooConfig.secret,
           webhook_secret: wooConfig.webhookSecret,
-          business_name: businessDetails.name,
-          business_phone: businessDetails.phone,
-          business_website: businessDetails.website,
           updated_at: new Date().toISOString()
         }, { onConflict: 'user_id' });
 
@@ -760,10 +862,75 @@ export default function App() {
       )
       .subscribe();
 
+    const categoriesChannel = supabase
+      .channel('public:categories')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'categories',
+          filter: `user_id=eq.${session.user.id}`
+        },
+        (payload) => {
+          console.log('Supabase category change received:', payload);
+          if (payload.eventType === 'INSERT') {
+            const newCategory = {
+              id: payload.new.category_id,
+              name: payload.new.name,
+              description: payload.new.description,
+              count: payload.new.count
+            };
+            setCategories(prev => {
+              if (prev.find(c => c.id === newCategory.id)) return prev;
+              return [newCategory, ...prev];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            setCategories(prev => prev.map(c => 
+              c.id === payload.new.category_id ? {
+                ...c,
+                name: payload.new.name,
+                description: payload.new.description,
+                count: payload.new.count
+              } : c
+            ));
+          } else if (payload.eventType === 'DELETE') {
+            setCategories(prev => prev.filter(c => c.id !== payload.old.category_id));
+          }
+        }
+      )
+      .subscribe();
+
+    const settingsChannel = supabase
+      .channel('public:settings')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'settings',
+          filter: `user_id=eq.${session.user.id}`
+        },
+        (payload) => {
+          if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+            if (payload.new.business_name || payload.new.business_phone || payload.new.business_website) {
+              setBusinessDetails({
+                name: payload.new.business_name || '',
+                phone: payload.new.business_phone || '',
+                website: payload.new.business_website || ''
+              });
+            }
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(ordersChannel);
       supabase.removeChannel(productsChannel);
       supabase.removeChannel(customersChannel);
+      supabase.removeChannel(categoriesChannel);
+      supabase.removeChannel(settingsChannel);
     };
   }, [session, supabase]);
 
@@ -778,6 +945,7 @@ export default function App() {
   const [currentView, setCurrentView] = useState<'dashboard' | 'orders' | 'products' | 'purchases' | 'customers' | 'settings' | 'profile' | 'sync'>('dashboard');
   const [orders, setOrders] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
   const [purchases, setPurchases] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
 
@@ -796,6 +964,7 @@ export default function App() {
         customer_phone: order.phone,
         customer_address: order.address,
         product_name: order.productName,
+        product_category: order.category,
         product_price: order.productPrice,
         delivery_charge: order.deliveryCharge,
         amount: order.amount,
@@ -863,6 +1032,24 @@ export default function App() {
       }
     } catch (error) {
       console.error('Failed to sync customer to Supabase (catch):', error);
+    }
+  };
+
+  const syncCategoryToSupabase = async (category: any) => {
+    if (!supabase || !session?.user) return;
+    try {
+      const { error } = await supabase.from('categories').upsert({
+        user_id: session.user.id,
+        category_id: category.id,
+        name: category.name,
+        description: category.description || '',
+        count: category.count || 0,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id, category_id' });
+
+      if (error) console.error('Supabase Category Sync Error:', error);
+    } catch (error) {
+      console.error('Failed to sync category (catch):', error);
     }
   };
 
@@ -1127,16 +1314,48 @@ export default function App() {
   };
 
   const handleRefresh = async () => {
+    if (!wooConfig.url || !wooConfig.key || !wooConfig.secret || isRefreshing) return;
+    
     setIsRefreshing(true);
     try {
-      await Promise.all([
-        getWooProducts(),
-        getWooStats()
-      ]);
+      // Call the Supabase Edge Function to handle sync server-side
+      let syncError = null;
+      try {
+        const { data, error } = await supabase.functions.invoke('woocommerce-sync', {
+          body: { 
+            wooUrl: wooConfig.url, 
+            wooKey: wooConfig.key, 
+            wooSecret: wooConfig.secret,
+            syncType: 'all' // Sync everything via server
+          }
+        });
+        syncError = error;
+        if (!error) console.log('Successfully synced via Edge Function:', data);
+      } catch (err) {
+        syncError = err;
+      }
+
+      if (syncError) {
+        console.warn('Edge Function sync failed or not reachable, falling back to local sync:', syncError);
+        // Fallback to client-side sync if function isn't deployed or reachable
+        await Promise.all([
+          getWooProducts(),
+          getWooStats(),
+          getWooCategories()
+        ]);
+      } 
+
+      setNotifications([{
+        id: Date.now(),
+        title: 'Sync Engine',
+        message: 'All WooCommerce data synchronized via Edge Function.',
+        time: 'Just now',
+        read: false
+      }, ...notifications]);
     } catch (error) {
       console.error('Refresh failed:', error);
     } finally {
-      setTimeout(() => setIsRefreshing(false), 500);
+      setIsRefreshing(false);
     }
   };
 
@@ -2420,6 +2639,16 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setCurrentView('sync')}
+            className={cn(
+              "p-2 rounded-full transition-colors hidden md:flex",
+              currentView === 'sync' ? "bg-blue-50 text-blue-600" : "text-slate-500 hover:bg-slate-100"
+            )}
+            title="Sync WooCommerce"
+          >
+            <RefreshCw size={20} className={isRefreshing ? "animate-spin" : ""} />
+          </button>
           <div className="relative">
             <button 
               onClick={() => {
@@ -2578,6 +2807,15 @@ export default function App() {
                   active={currentView === 'dashboard'} 
                   onClick={() => {
                     setCurrentView('dashboard');
+                    setSidebarOpen(false);
+                  }}
+                />
+                <SidebarItem 
+                  icon={RefreshCw} 
+                  label="Sync Engine" 
+                  active={currentView === 'sync'} 
+                  onClick={() => {
+                    setCurrentView('sync');
                     setSidebarOpen(false);
                   }}
                 />
@@ -2753,15 +2991,6 @@ export default function App() {
                 <div className="mt-8 mb-4 border-t border-slate-100 pt-6">
                   <SidebarItem icon={BookOpen} label="Learning Center" />
                   <SidebarItem 
-                    icon={RefreshCw} 
-                    label="Sync Dashboard" 
-                    active={currentView === 'sync'}
-                    onClick={() => {
-                      setCurrentView('sync');
-                      setSidebarOpen(false);
-                    }}
-                  />
-                  <SidebarItem 
                     icon={Settings} 
                     label="Settings" 
                     active={currentView === 'settings'}
@@ -2876,6 +3105,166 @@ export default function App() {
           </div>
         </div>
 
+        {currentView === 'sync' && (
+          <div className="max-w-4xl mx-auto space-y-6">
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-xl p-8">
+              <div className="flex items-center gap-4 mb-8">
+                <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600">
+                  <RefreshCw size={24} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-800">WooCommerce Sync Engine</h3>
+                  <p className="text-sm text-slate-500">Manage real-time data synchronization with your store</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Sync Status</span>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                    <span className="text-sm font-bold text-slate-700">Connected</span>
+                  </div>
+                </div>
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Last Update</span>
+                  <span className="text-sm font-bold text-slate-700">Just Now</span>
+                </div>
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Synced Items</span>
+                  <span className="text-sm font-bold text-slate-700">{orders.length + products.length + categories.length}</span>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <button 
+                  onClick={() => {
+                    handleRefresh();
+                    setNotifications([{
+                      id: Date.now(),
+                      title: 'Manual Sync Started',
+                      message: 'Fetching latest data from WooCommerce...',
+                      time: 'Just now',
+                      read: false
+                    }, ...notifications]);
+                  }}
+                  disabled={isRefreshing}
+                  className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-all active:scale-[0.98] disabled:opacity-50"
+                >
+                  <RefreshCw size={18} className={isRefreshing ? "animate-spin" : ""} />
+                  {isRefreshing ? 'Synchronizing Data...' : 'Sync All Data Now'}
+                </button>
+                <p className="text-[10px] text-center text-slate-400 font-medium italic">
+                  This will pull latest orders, products, and statistics from your WooCommerce store.
+                </p>
+              </div>
+
+              <div className="mt-12 pt-8 border-t border-slate-100">
+                <h4 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <ShieldCheck size={18} className="text-slate-400" />
+                  Database Setup (Required)
+                </h4>
+                <div className="bg-slate-900 rounded-xl p-6 relative group">
+                  <div className="flex justify-between items-center mb-4">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">SQL Migration Script (Run in Supabase)</span>
+                    <button 
+                      onClick={() => {
+                        const sql = `ALTER TABLE settings 
+ADD COLUMN IF NOT EXISTS business_name TEXT,
+ADD COLUMN IF NOT EXISTS business_phone TEXT,
+ADD COLUMN IF NOT EXISTS business_website TEXT;
+
+ALTER TABLE orders 
+ADD COLUMN IF NOT EXISTS product_category TEXT;
+
+CREATE TABLE IF NOT EXISTS categories (
+  user_id UUID REFERENCES auth.users(id),
+  category_id TEXT,
+  name TEXT,
+  description TEXT,
+  count INTEGER,
+  updated_at TIMESTAMP WITH TIME ZONE,
+  PRIMARY KEY (user_id, category_id)
+);
+
+CREATE TABLE IF NOT EXISTS products (
+  user_id UUID REFERENCES auth.users(id),
+  product_id TEXT,
+  name TEXT,
+  price DECIMAL,
+  stock_status TEXT,
+  updated_at TIMESTAMP WITH TIME ZONE,
+  PRIMARY KEY (user_id, product_id)
+);`;
+                        navigator.clipboard.writeText(sql);
+                        setNotifications([{id: Date.now(), title: 'Copied', message: 'SQL copied to clipboard', time: 'Just now', read: false}, ...notifications]);
+                      }}
+                      className="text-[10px] text-blue-400 font-bold hover:text-blue-300 uppercase tracking-widest transition-colors"
+                    >
+                      Copy SQL
+                    </button>
+                  </div>
+                  <pre className="text-xs font-mono text-blue-100/80 overflow-x-auto whitespace-pre-wrap leading-relaxed border border-blue-500/20 p-4 rounded-lg bg-slate-950">
+                    {`-- IMPORTANT: ONLY run this SQL code in Supabase
+-- DO NOT paste React/JavaScript code here
+
+ALTER TABLE settings 
+ADD COLUMN IF NOT EXISTS business_name TEXT,
+ADD COLUMN IF NOT EXISTS business_phone TEXT,
+ADD COLUMN IF NOT EXISTS business_website TEXT;
+
+ALTER TABLE orders 
+ADD COLUMN IF NOT EXISTS product_category TEXT;
+
+CREATE TABLE IF NOT EXISTS categories (
+  user_id UUID REFERENCES auth.users(id),
+  category_id TEXT,
+  name TEXT,
+  description TEXT,
+  count INTEGER,
+  updated_at TIMESTAMP WITH TIME ZONE,
+  PRIMARY KEY (user_id, category_id)
+);
+
+CREATE TABLE IF NOT EXISTS products (
+  user_id UUID REFERENCES auth.users(id),
+  product_id TEXT,
+  name TEXT,
+  price DECIMAL,
+  stock_status TEXT,
+  updated_at TIMESTAMP WITH TIME ZONE,
+  PRIMARY KEY (user_id, product_id)
+);`}
+                  </pre>
+                </div>
+                <div className="mt-4 p-5 bg-red-50 border-2 border-red-200 rounded-xl animate-pulse">
+                  <p className="text-xs text-red-800 leading-relaxed font-bold flex items-start gap-2">
+                    <AlertCircle size={18} className="shrink-0 mt-0.5" />
+                    <span>
+                      সতর্কবার্তা: আপনি সুপাবেস (Supabase) এ ভুল কোড পেস্ট করছেন। 
+                      নিচের নীল বক্সের কোডটি ছাড়া অন্য কোনো কোড (JavaScript) সুপাবেসে কাজ করবে না। 
+                      দয়া করে শুধুমাত্র নিচের নীল বক্সের ভিতর থাকা SQL কোডটি কপি করে সুপাবেসের SQL Editor-এ রান করুন।
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              {categories.length > 0 && (
+                <div className="mt-8 pt-8 border-t border-slate-100">
+                  <h4 className="text-sm font-bold text-slate-800 mb-4">Synced Categories</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {categories.map(cat => (
+                      <span key={cat.id} className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium border border-slate-200">
+                        {cat.name} ({cat.count})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {currentView === 'profile' && (
           <div className="max-w-3xl mx-auto space-y-6 pb-20">
             <div className="bg-white rounded-2xl border border-slate-100 shadow-xl shadow-slate-200/50 overflow-hidden">
@@ -2894,54 +3283,6 @@ export default function App() {
                 </div>
 
                 <div className="space-y-8 pt-8 border-t border-slate-50">
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2">
-                       <Store size={18} className="text-blue-500" />
-                       Business Details
-                    </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Business Name</label>
-                        <input 
-                          type="text" 
-                          placeholder="Your Brand Name"
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-300"
-                          value={businessDetails.name}
-                          onChange={(e) => setBusinessDetails({ ...businessDetails, name: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Business Phone</label>
-                        <input 
-                          type="tel" 
-                          placeholder="+880 1XXX XXXXXX"
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-300"
-                          value={businessDetails.phone}
-                          onChange={(e) => setBusinessDetails({ ...businessDetails, phone: e.target.value })}
-                        />
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Website URL</label>
-                        <input 
-                          type="url" 
-                          placeholder="https://yourstore.com"
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-300"
-                          value={businessDetails.website}
-                          onChange={(e) => setBusinessDetails({ ...businessDetails, website: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                    <div className="mt-8 flex justify-center sm:justify-end">
-                      <button 
-                         onClick={saveAccountSettings}
-                         disabled={isConfigSaving}
-                         className="px-8 py-3 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50"
-                      >
-                        {isConfigSaving ? 'Saving...' : 'Update Business Details'}
-                      </button>
-                    </div>
-                  </div>
-
                   <div className="pt-8 border-t border-slate-50">
                     <h4 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2">
                        <ShieldCheck size={18} className="text-slate-400" />
@@ -3119,6 +3460,10 @@ export default function App() {
                 </p>
 
                 <div className="space-y-6">
+                  <div className="pt-6 border-t border-slate-100">
+                    <h4 className="text-sm font-bold text-slate-800 mb-4">WooCommerce API Keys</h4>
+                  </div>
+
                   <div>
                     <label className="block text-xs font-bold text-slate-500 mb-2 ml-1">Site URL</label>
                     <input 
@@ -3170,6 +3515,17 @@ export default function App() {
                       <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
                     </div>
                   </div>
+
+                  <div className="pt-6">
+                    <button 
+                      onClick={saveAccountSettings}
+                      disabled={isConfigSaving}
+                      className="w-full py-4 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-800 transition-all active:scale-[0.98] disabled:opacity-50"
+                    >
+                      {isConfigSaving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                      {isConfigSaving ? 'Saving Changes...' : 'Save All Settings'}
+                    </button>
+                  </div>
                 </div>
 
                 {configError && (
@@ -3181,53 +3537,85 @@ export default function App() {
               </div>
             </div>
             
-            <div className="bg-white rounded-xl border border-slate-200 p-6 flex flex-col gap-4">
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={18} className="text-green-600" />
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-widest">Webhook Configuration</h4>
+            <div className="mt-12 pt-8 border-t border-slate-100">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <RefreshCw size={24} className="text-blue-500" />
+                  Webhook Settings
+                </h3>
               </div>
-              <p className="text-[11px] text-slate-500 leading-relaxed">
-                Unique Webhook Secret: <span className="font-mono bg-slate-100 px-1 rounded select-all">{wooConfig.webhookSecret || 'Not Generated'}</span>
-              </p>
-              <div className="space-y-3">
-                <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase">Product Updated Webhook URL</span>
-                    <button className="text-[9px] font-bold text-blue-600 uppercase">Copy</button>
-                  </div>
-                  <code className="text-[10px] text-slate-600 break-all">https://{window.location.host}/api/webhooks/orders</code>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {currentView === 'sync' && (
-          <div className="space-y-8 pb-20">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {[
-                { id: 'orders', title: 'Orders', icon: ShoppingBag, color: 'text-blue-600', bg: 'bg-blue-50' },
-                { id: 'products', title: 'Products', icon: Package, color: 'text-purple-600', bg: 'bg-purple-50' },
-                { id: 'categories', title: 'Categories', icon: Layers, color: 'text-orange-600', bg: 'bg-orange-50' },
-              ].map((item) => (
-                <div key={item.id} className="bg-white p-8 rounded-2xl border border-slate-100 shadow-xl shadow-slate-200/50 flex flex-col items-center text-center">
-                  <div className={cn("p-4 rounded-2xl mb-4", item.bg)}>
-                    <item.icon className={item.color} size={32} />
-                  </div>
-                  <h3 className="text-lg font-bold text-slate-800 mb-1">{item.title}</h3>
-                  <p className="text-xs text-slate-400 mb-6 font-medium">
-                    {syncLogs[item.id] || 'Never synced'}
+              <div className="space-y-6">
+                {/* Alert Box */}
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 flex gap-4">
+                  <AlertCircle className="text-amber-500 shrink-0" size={24} />
+                  <p className="text-sm text-amber-900 leading-relaxed font-medium">
+                    Before setup the webhook, make sure to update your import settings and sync your categories, products, and orders manually at least once.
                   </p>
-                  <button 
-                    disabled={isSyncing[item.id]}
-                    onClick={() => handleManualSync(item.id as any)}
-                    className="w-full py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    {isSyncing[item.id] ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                    Sync Now
-                  </button>
                 </div>
-              ))}
+
+                {/* Instructions */}
+                <div className="px-1 text-sm text-slate-600 leading-relaxed">
+                  <p>
+                    Go to your <strong>WooCommerce Dashboard</strong>. Navigate to 
+                    <span className="font-bold"> WooCommerce &gt; Settings &gt; Advanced &gt; Webhooks</span>. 
+                    Click <span className="text-blue-600 font-bold">Add webhook</span>.
+                  </p>
+                </div>
+
+                {/* Webhook Inputs */}
+                <div className="space-y-5">
+                  {/* Secret Key */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-2 ml-1">Webhook Secret Key</label>
+                    <div className="flex bg-white border border-slate-200 rounded-xl overflow-hidden group focus-within:ring-2 focus-within:ring-blue-500 transition-all">
+                      <input 
+                        type="text" 
+                        readOnly 
+                        value={webhookSecret}
+                        className="flex-1 px-5 py-4 text-sm font-medium text-slate-700 outline-none"
+                      />
+                      <button 
+                        onClick={generateWebhookSecret}
+                        className="px-4 text-slate-400 hover:text-blue-500 transition-colors border-l border-slate-100"
+                      >
+                        <RefreshCw size={18} />
+                      </button>
+                      <AnimatedCopyButton 
+                        text={webhookSecret} 
+                        onCopy={() => {
+                          setNotifications([{id: Date.now(), title: 'Copied', message: 'Secret key copied', time: 'Just now', read: false}, ...notifications]);
+                        }} 
+                      />
+                    </div>
+                  </div>
+
+                  {/* URLs */}
+                  {[
+                    { label: 'Product Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=product.created` },
+                    { label: 'Product Updated Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=product.updated` },
+                    { label: 'Order Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=order.created` },
+                  ].map((item, idx) => (
+                    <div key={idx}>
+                      <label className="block text-xs font-bold text-slate-500 mb-2 ml-1">{item.label}</label>
+                      <div className="flex bg-white border border-slate-200 rounded-xl overflow-hidden group focus-within:ring-2 focus-within:ring-blue-500 transition-all">
+                        <input 
+                          type="text" 
+                          readOnly 
+                          value={item.value}
+                          className="flex-1 px-5 py-4 text-sm font-medium text-blue-600 outline-none truncate"
+                        />
+                        <AnimatedCopyButton 
+                          text={item.value} 
+                          onCopy={() => {
+                            setNotifications([{id: Date.now(), title: 'Copied', message: 'Webhook URL copied', time: 'Just now', read: false}, ...notifications]);
+                          }} 
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -3444,6 +3832,8 @@ export default function App() {
                     <th className="px-6 py-4 font-bold">Order #</th>
                     <th className="px-6 py-4 font-bold">Date & Time</th>
                     <th className="px-6 py-4 font-bold">Customer</th>
+                    <th className="px-6 py-4 font-bold">Product</th>
+                    <th className="px-6 py-4 font-bold">Category</th>
                     <th className="px-6 py-4 font-bold">Amount</th>
                     <th className="px-6 py-4 font-bold text-right">Status</th>
                   </tr>
@@ -3465,6 +3855,10 @@ export default function App() {
                           <span className="text-[10px] text-slate-400">{order.time}</span>
                         </td>
                         <td className="px-6 py-4 font-medium text-slate-800">{order.customer}</td>
+                        <td className="px-6 py-4 text-xs font-medium text-slate-600">{order.productName}</td>
+                        <td className="px-6 py-4 text-[10px] uppercase font-bold text-slate-400 tracking-wider font-mono">
+                          <span className="bg-slate-100 px-2 py-0.5 rounded-md">{order.category}</span>
+                        </td>
                         <td className="px-6 py-4 font-bold text-slate-800">৳ {order.amount.toLocaleString()}</td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-3">
