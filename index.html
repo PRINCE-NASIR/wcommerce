@@ -4,6 +4,36 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WooCommerce POS Dashboard</title>
+    <script>
+      // Robust global shim to prevent "Cannot set property fetch of #<Window>" errors
+      // commonly caused by fetch polyfills in sandboxed environments (like iframes or WebViews).
+      (function() {
+        if (typeof global === 'undefined') {
+          try {
+            window.global = new Proxy(window, {
+              get(target, prop) {
+                if (prop === 'global') return window.global;
+                // Basic property access
+                const val = target[prop];
+                if (typeof val === 'function') return val.bind(target);
+                return val;
+              },
+              set(target, prop, value) {
+                try {
+                  target[prop] = value;
+                } catch (e) {
+                  console.warn('Caught attempt to overwrite read-only property:', prop);
+                }
+                return true; // Always return true to pretend success
+              }
+            });
+          } catch (e) {
+            // Fallback for very old browsers that don't support Proxy
+            window.global = window;
+          }
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { motion } from 'motion/react';
-import { LogIn, UserPlus, Mail, Lock, Eye, EyeOff, AlertCircle, ShoppingBag } from 'lucide-react';
+import { LogIn, UserPlus, Mail, Lock, Eye, EyeOff, AlertCircle, ShoppingBag, RefreshCw } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -17,7 +17,29 @@ export default function Auth() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isConfigMissing = !(import.meta as any).env.VITE_SUPABASE_URL || !(import.meta as any).env.VITE_SUPABASE_ANON_KEY;
+  const getEnv = (key: string) => {
+    return (import.meta as any).env?.[key] || (process as any).env?.[key];
+  };
+
+  const hasUrl = !!getEnv('VITE_SUPABASE_URL');
+  const hasKey = !!getEnv('VITE_SUPABASE_ANON_KEY');
+  
+  // Check for common naming mistakes
+  const envKeys = Object.keys((import.meta as any).env || {}).concat(Object.keys((process as any).env || {}));
+  const hasSimilarKey = envKeys.some(k => k.startsWith('VITE_SUPABASE_ANON') && k !== 'VITE_SUPABASE_ANON_KEY');
+
+  const isConfigMissing = !hasUrl || !hasKey;
+
+  // Debug log to help the user
+  React.useEffect(() => {
+    console.log('Environment Debug:', {
+      hasUrl,
+      hasKey,
+      hasSimilarKey,
+      urlPrefix: getEnv('VITE_SUPABASE_URL')?.substring(0, 10),
+      allKeys: envKeys
+    });
+  }, [hasUrl, hasKey]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,6 +123,18 @@ export default function Auth() {
                     <p className="font-bold text-[9px] uppercase tracking-wider text-amber-700 mb-1">Step 3</p>
                     <p>Add **VITE_SUPABASE_ANON_KEY** with your Anon/Public API Key.</p>
                   </div>
+                  {hasSimilarKey && (
+                    <div className="bg-red-50 p-2 rounded border border-red-100 text-red-700 font-bold animate-pulse">
+                      <p>⚠️ Detection: You might have misspelled VITE_SUPABASE_ANON_KEY. Check your Secrets carefully!</p>
+                    </div>
+                  )}
+                  <button 
+                    onClick={() => window.location.reload()}
+                    className="mt-2 w-full py-2 bg-amber-200 hover:bg-amber-300 text-amber-900 font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
+                  >
+                    <RefreshCw size={14} />
+                    Refresh Application
+                  </button>
                 </div>
               </div>
             </div>
