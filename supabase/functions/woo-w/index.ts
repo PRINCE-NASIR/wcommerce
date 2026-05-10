@@ -5,15 +5,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.7"
 const WOOC_SECRET = Deno.env.get('WOOCOMMERCE_WEBHOOK_SECRET') || '';
 
 serve(async (req) => {
-  // 1. Handle WooCommerce 'ping' (GET request) when saving the webhook
-  // This is CRITICAL to fix the 404/Activation error
-  if (req.method === 'GET') {
-    return new Response("Webhook active", { status: 200 });
-  }
-
-  // Handle CORS
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { 
+  // Handle WooCommerce activation (GET/HEAD) and CORS (OPTIONS)
+  if (req.method !== 'POST') {
+    return new Response("OK", { 
+      status: 200,
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-wc-webhook-signature, x-wc-webhook-topic',
