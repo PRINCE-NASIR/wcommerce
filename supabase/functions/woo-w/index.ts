@@ -56,7 +56,23 @@ serve(async (req) => {
           stock_status: payload.stock_status,
           updated_at: new Date().toISOString()
         });
-        if (error) console.error("Database Error:", error);
+        if (error) console.error("Database Error (Product):", error);
+      }
+
+      if (topic === 'order.created' && userId) {
+        // Example: Upsert to orders table
+        const { error } = await supabaseAdmin.from('orders').upsert({
+          user_id: userId,
+          id: payload.id.toString(),
+          customer_name: `${payload.billing?.first_name} ${payload.billing?.last_name}`,
+          customer_phone: payload.billing?.phone,
+          customer_address: `${payload.billing?.address_1}, ${payload.billing?.city}`,
+          total_amount: parseFloat(payload.total) || 0,
+          status: 'Pending',
+          updated_at: new Date().toISOString(),
+          raw_webhook_payload: payload
+        });
+        if (error) console.error("Database Error (Order):", error);
       }
 
       return new Response(JSON.stringify({ success: true, message: "Webhook received" }), {

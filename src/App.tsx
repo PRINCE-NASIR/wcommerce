@@ -4133,21 +4133,43 @@ CREATE TABLE IF NOT EXISTS products (
                   {/* URLs */}
                   <div className="grid grid-cols-1 gap-6">
                     {[
-                      { label: 'Product Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=product.created` },
-                      { label: 'Product Updated Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=product.updated` },
-                      { label: 'Order Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=order.created` },
+                      { label: 'WooCommerce Webhook Delivery URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-w?user_id=${session?.user?.id}` },
                     ].map((item, idx) => (
                       <div key={idx} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
                         <div className="px-5 py-3 border-b border-slate-50 bg-slate-50/50">
                           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.label}</label>
                         </div>
-                        <div className="p-4 flex flex-col items-center gap-4">
+                        <div className="p-4 flex flex-col items-center gap-4 text-center">
+                          <p className="text-xs text-slate-500 max-w-md">Use this single URL for all WooCommerce Webhooks (Product Created, Order Created, etc). The system will automatically handle different topics.</p>
                           <input 
                             type="text" 
                             readOnly 
                             value={item.value}
                             className="w-full px-4 py-3 text-sm font-medium text-blue-600 bg-blue-50/30 rounded-xl text-center outline-none border border-transparent focus:border-blue-200 transition-all"
                           />
+                          <div className="mt-4 p-4 bg-orange-50 border border-orange-100 rounded-xl text-left">
+                            <p className="text-[11px] font-bold text-orange-800 mb-2 flex items-center gap-2">
+                              <AlertCircle size={14} /> Fixing 404 / Activation Error:
+                            </p>
+                            <p className="text-[10px] text-orange-700 leading-relaxed">
+                              If you get a 404 error when saving the webhook, ensure your Edge Function is deployed and handles GET requests. The code I provided already fixes this.
+                            </p>
+                            <div className="mt-3 space-y-2">
+                              <p className="text-[10px] font-bold text-orange-900 uppercase">Deployment Command:</p>
+                              <div className="bg-slate-900 p-2 rounded-lg relative group">
+                                <code className="text-[10px] text-blue-300 font-mono break-all">npx supabase functions deploy woo-w --no-verify-jwt</code>
+                                <button 
+                                  onClick={() => {
+                                    navigator.clipboard.writeText('npx supabase functions deploy woo-w --no-verify-jwt');
+                                    setNotifications([{id: Date.now(), title: 'Copied', message: 'Command copied', time: 'Just now', read: false}, ...notifications]);
+                                  }}
+                                  className="absolute top-1 right-1 p-1 bg-white/10 hover:bg-white/20 rounded text-[9px] text-white transition-opacity"
+                                >
+                                  Copy
+                                </button>
+                              </div>
+                            </div>
+                          </div>
                           <AnimatedCopyButton 
                             text={item.value} 
                             onCopy={() => {
