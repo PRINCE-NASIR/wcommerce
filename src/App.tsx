@@ -1117,7 +1117,67 @@ export default function App() {
     };
   }, [session, supabase]);
 
-  const [notifications, setNotifications] = useState<{id: number, title: string, message: string, time: string, read: boolean, orderId?: string}[]>([]);
+  const handleOrderSync = async () => {
+    if (!supabase || !session?.user) {
+      setNotifications(prev => [{
+        id: generateId(),
+        title: 'Authentication Required',
+        message: 'Please log in to sync your store.',
+        time: 'Just now',
+        read: false,
+        type: 'error'
+      }, ...prev]);
+      return;
+    }
+
+    setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: true } }));
+    setNotifications(prev => [{
+      id: generateId(),
+      title: 'Global Sync Started',
+      message: 'Triggering WooCommerce Sync Engine...',
+      time: 'Just now',
+      read: false
+    }, ...prev]);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('woo-sync', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        setSyncStatus(prev => ({ ...prev, orders: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
+        setNotifications(prev => [{
+          id: generateId(),
+          title: 'Sync Complete',
+          message: `Successfully synchronized ${data.count} orders from WooCommerce.`,
+          time: 'Just now',
+          read: false,
+          type: 'success'
+        }, ...prev]);
+        
+        // Refresh local data
+        getWooStats();
+      } else {
+        throw new Error(data?.error || 'Unknown sync error');
+      }
+    } catch (err: any) {
+      setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: false } }));
+      setNotifications(prev => [{
+        id: generateId(),
+        title: 'Sync Failed',
+        message: err.message || 'Check your API settings and try again.',
+        time: 'Just now',
+        read: false,
+        type: 'error'
+      }, ...prev]);
+    }
+  };
+
+  const [notifications, setNotifications] = useState<{id: number, title: string, message: string, time: string, read: boolean, type?: string, orderId?: string}[]>([]);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [toasts, setToasts] = useState<any[]>([]);
 
@@ -3772,7 +3832,7 @@ export default function App() {
                   label: 'Orders', 
                   icon: ShoppingCart, 
                   color: 'bg-indigo-600', 
-                  handler: getWooStats, 
+                  handler: handleOrderSync, 
                   status: syncStatus.orders 
                 },
                 { 
