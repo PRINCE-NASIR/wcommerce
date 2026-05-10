@@ -4131,65 +4131,36 @@ CREATE TABLE IF NOT EXISTS products (
                   </div>
 
                   {/* URLs */}
-                  <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-6">
                     <p className="text-xs text-slate-500 leading-relaxed italic">
-                      Go to: <span className="font-bold text-slate-700">WooCommerce &gt; Settings &gt; Advanced &gt; Webhooks</span>. Create a webhook and use the URL below.
+                      Provide these URLs in your <span className="font-bold text-slate-700">WooCommerce &gt; Settings &gt; Advanced &gt; Webhooks</span>.
                     </p>
 
-                    <div className="bg-white border-2 border-blue-100 rounded-2xl overflow-hidden shadow-md group transition-all hover:border-blue-300">
-                      <div className="px-5 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100 flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Smart Delivery URL</span>
-                        <div className="px-2 py-0.5 bg-blue-600 text-[9px] text-white font-bold rounded-full animate-pulse">Active & Ready</div>
-                      </div>
-                      <div className="p-5">
-                        <div className="flex flex-col gap-4">
-                          <div className="relative group/url">
-                            <input 
-                              type="text" 
-                              readOnly 
-                              value={`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-w?user_id=${session?.user?.id}`}
-                              className="w-full px-4 py-4 text-sm font-mono text-blue-700 bg-blue-50/50 rounded-xl border border-blue-100 outline-none transition-all focus:ring-2 focus:ring-blue-100 pr-24"
-                            />
-                            <button 
-                              onClick={() => {
-                                navigator.clipboard.writeText(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-w?user_id=${session?.user?.id}`);
-                                setNotifications([{id: Date.now(), title: 'Copied', message: 'Smart URL copied', time: 'Just now', read: false}, ...notifications]);
-                              }}
-                              className="absolute right-2 top-2 bottom-2 px-4 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all shadow-sm flex items-center gap-2"
-                            >
-                              Copy URL
-                            </button>
-                          </div>
-                          
-                          <p className="text-[11px] text-slate-500 leading-relaxed">
-                            <span className="font-bold text-blue-600">Info:</span> এই একটি URL ব্যবহার করে আপনি সব ধরণের Webhook (Order/Product) কানেক্ট করতে পারবেন। WooCommerce এ আলাদা আলাদা URL দেওয়ার প্রয়োজন নেই।
-                          </p>
-
-                          <div className="mt-2 pt-4 border-t border-slate-100">
-                            <div className="bg-amber-50 rounded-xl p-4 border border-amber-100">
-                              <h4 className="text-xs font-bold text-amber-900 mb-2 flex items-center gap-2">
-                                <AlertCircle size={14} /> Fixing 500 / Activation Error
-                              </h4>
-                              <p className="text-[10px] text-amber-800 mb-3 leading-relaxed">
-                                আপনি যদি WooCommerce এ Webhook সেভ করার সময় এরর পান, তবে নিচের কোডটি কপি করে আপনার টার্মিনালে রান করুন এবং ফাংশনটি আবার ডিপ্লয় করুন:
-                              </p>
-                              <div className="bg-slate-900 rounded-lg p-3 flex items-center justify-between">
-                                <code className="text-[10px] text-emerald-400 font-mono">npx supabase functions deploy woo-w --no-verify-jwt</code>
-                                <button 
-                                  onClick={() => {
-                                    navigator.clipboard.writeText('npx supabase functions deploy woo-w --no-verify-jwt');
-                                    setNotifications([{id: Date.now(), title: 'Copied', message: 'Command copied', time: 'Just now', read: false}, ...notifications]);
-                                  }}
-                                  className="text-[9px] font-bold text-white/50 hover:text-white transition-colors bg-white/10 px-2 py-1 rounded"
-                                >
-                                  Copy Command
-                                </button>
-                              </div>
-                            </div>
-                          </div>
+                    {[
+                      { label: 'Product Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-w?user_id=${session?.user?.id}&topic=product.created` },
+                      { label: 'Product Updated Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-w?user_id=${session?.user?.id}&topic=product.updated` },
+                      { label: 'Order Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-w?user_id=${session?.user?.id}&topic=order.created` },
+                    ].map((item, idx) => (
+                      <div key={idx} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+                        <div className="px-5 py-3 border-b border-slate-50 bg-slate-50/50">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.label}</label>
+                        </div>
+                        <div className="p-4 flex flex-col items-center gap-4">
+                          <input 
+                            type="text" 
+                            readOnly 
+                            value={item.value}
+                            className="w-full px-4 py-3 text-sm font-medium text-blue-600 bg-blue-50/30 rounded-xl text-center outline-none border border-transparent focus:border-blue-200 transition-all"
+                          />
+                          <AnimatedCopyButton 
+                            text={item.value} 
+                            onCopy={() => {
+                              setNotifications([{id: Date.now(), title: 'Copied', message: 'Webhook URL copied', time: 'Just now', read: false}, ...notifications]);
+                            }} 
+                          />
                         </div>
                       </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
               </div>
