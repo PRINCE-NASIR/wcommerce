@@ -74,6 +74,17 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+let sequenceId = Date.now();
+const generateId = () => {
+  const now = Date.now();
+  if (now <= sequenceId) {
+    sequenceId += 1;
+  } else {
+    sequenceId = now;
+  }
+  return sequenceId;
+};
+
 // --- Mock Data ---
 const SALES_DATA_30: any[] = [];
 const SALES_DATA_7: any[] = [];
@@ -267,6 +278,11 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<Record<string, { loading: boolean, lastUpdate: string }>>({
+    orders: { loading: false, lastUpdate: '-' },
+    products: { loading: false, lastUpdate: '-' },
+    categories: { loading: false, lastUpdate: '-' }
+  });
   const [isBackendConfigured, setIsBackendConfigured] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -355,9 +371,37 @@ export default function App() {
   const getWooCategories = useCallback(async () => {
     if (!wooConfig.url || wooConfig.url.includes('test.local')) {
       setIsPlaceholder(true);
+      setNotifications(prev => [{
+        id: generateId(),
+        title: 'Action Required',
+        message: 'Please set your actual WooCommerce URL in Settings.',
+        time: 'Just now',
+        read: false,
+        type: 'warning'
+      }, ...prev]);
       return;
     }
-    if (!wooConfig.key || !wooConfig.secret) return;
+    if (!wooConfig.key || !wooConfig.secret) {
+      setNotifications(prev => [{
+        id: generateId(),
+        title: 'Missing Credentials',
+        message: 'Please provide WooCommerce API Key and Secret in Settings.',
+        time: 'Just now',
+        read: false,
+        type: 'error'
+      }, ...prev]);
+      return;
+    }
+    
+    setSyncStatus(prev => ({ ...prev, categories: { ...prev.categories, loading: true } }));
+    setNotifications(prev => [{
+      id: generateId(),
+      title: 'Syncing...',
+      message: 'Fetching categories from your store...',
+      time: 'Just now',
+      read: false
+    }, ...prev]);
+
     try {
       const response = await axios.get('/api/categories', {
         headers: {
@@ -375,19 +419,55 @@ export default function App() {
         }));
         setCategories(mapped);
         mapped.forEach(cat => syncCategoryToSupabase(cat));
+        setSyncStatus(prev => ({ ...prev, categories: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
+        setNotifications(prev => [{
+          id: generateId(),
+          title: 'Sync Complete',
+          message: `Successfully synced ${mapped.length} categories.`,
+          time: 'Just now',
+          read: false,
+          type: 'success'
+        }, ...prev]);
       }
     } catch (error: any) {
+      setSyncStatus(prev => ({ ...prev, categories: { ...prev.categories, loading: false } }));
       const details = error.response?.data?.details || error.message;
       console.error('Failed to fetch categories:', details);
+      setNotifications(prev => [{
+        id: generateId(),
+        title: 'Sync Failed',
+        message: details,
+        time: 'Just now',
+        read: false,
+        type: 'error'
+      }, ...prev]);
     }
   }, [wooConfig]);
-
+  
   const getWooStats = useCallback(async () => {
     if (!wooConfig.url || wooConfig.url.includes('test.local')) {
       setIsPlaceholder(true);
+      setNotifications(prev => [{
+        id: generateId(),
+        title: 'Action Required',
+        message: 'Please set your actual WooCommerce URL in Settings.',
+        time: 'Just now',
+        read: false,
+        type: 'warning'
+      }, ...prev]);
       return;
     }
     if (!wooConfig.key || !wooConfig.secret) return;
+    
+    setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: true } }));
+    setNotifications(prev => [{
+      id: generateId(),
+      title: 'Syncing Orders...',
+      message: 'Fetching latest orders and statistics...',
+      time: 'Just now',
+      read: false
+    }, ...prev]);
+
     try {
       const response = await axios.get('/api/stats', {
         headers: {
@@ -417,6 +497,7 @@ export default function App() {
             });
         }
         
+        let orderAdded = 0;
         if (response.data.recentOrders && Array.isArray(response.data.recentOrders)) {
           const mappedOrders = response.data.recentOrders.map((o: any) => {
             const firstItem = o.line_items?.[0];
@@ -442,6 +523,7 @@ export default function App() {
               status: mapWooStatus(o.status)
             };
           });
+          orderAdded = mappedOrders.length;
           setOrders(prev => {
             const combined = [...mappedOrders];
             prev.forEach(p => {
@@ -456,14 +538,32 @@ export default function App() {
           mappedOrders.forEach(order => syncOrderToSupabase(order));
         }
         
+        setSyncStatus(prev => ({ ...prev, orders: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
         setIsBackendConfigured(true);
+        setNotifications(prev => [{
+          id: generateId(),
+          title: 'Orders Synced',
+          message: `Successfully updated stats and ${orderAdded} orders.`,
+          time: 'Just now',
+          read: false,
+          type: 'success'
+        }, ...prev]);
       }
     } catch (error: any) {
+      setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: false } }));
       if (error.response?.status === 401) {
         setIsBackendConfigured(false);
       } else {
         const details = error.response?.data?.details || error.message;
         console.error('Failed to fetch stats:', details);
+        setNotifications(prev => [{
+          id: generateId(),
+          title: 'Sync Failed',
+          message: details,
+          time: 'Just now',
+          read: false,
+          type: 'error'
+        }, ...prev]);
       }
     }
   }, [wooConfig]);
@@ -471,9 +571,27 @@ export default function App() {
   const getWooProducts = useCallback(async () => {
     if (!wooConfig.url || wooConfig.url.includes('test.local')) {
       setIsPlaceholder(true);
+      setNotifications(prev => [{
+        id: generateId(),
+        title: 'Action Required',
+        message: 'Please set your actual WooCommerce URL in Settings.',
+        time: 'Just now',
+        read: false,
+        type: 'warning'
+      }, ...prev]);
       return;
     }
     if (!wooConfig.key || !wooConfig.secret) return;
+    
+    setSyncStatus(prev => ({ ...prev, products: { ...prev.products, loading: true } }));
+    setNotifications(prev => [{
+      id: generateId(),
+      title: 'Syncing Products...',
+      message: 'Fetching inventory from your store...',
+      time: 'Just now',
+      read: false
+    }, ...prev]);
+
     try {
       const response = await axios.get('/api/products', {
         headers: {
@@ -505,26 +623,36 @@ export default function App() {
         // Auto-Sync each product
         mappedProducts.forEach(product => syncProductToSupabase(product));
         
+        setSyncStatus(prev => ({ ...prev, products: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
         setIsBackendConfigured(true);
+        setNotifications(prev => [{
+          id: generateId(),
+          title: 'Products Synced',
+          message: `Successfully synced ${mappedProducts.length} products.`,
+          time: 'Just now',
+          read: false,
+          type: 'success'
+        }, ...prev]);
       }
     } catch (error: any) {
+      setSyncStatus(prev => ({ ...prev, products: { ...prev.products, loading: false } }));
       if (error.response?.status === 401) {
         setIsBackendConfigured(false);
       } else {
         const details = error.response?.data?.details || error.message;
         console.error('Failed to fetch products:', details);
+        setNotifications(prev => [{
+          id: generateId(),
+          title: 'Sync Failed',
+          message: details,
+          time: 'Just now',
+          read: false,
+          type: 'error'
+        }, ...prev]);
         
         // Push a specific notification for the user
         if (error.response?.data?.error === 'Placeholder URL detected') {
           setIsPlaceholder(true);
-          setNotifications(prev => [{
-            id: Date.now(),
-            title: 'Action Required',
-            message: 'আপনি এখনো আপনার ওয়েবসাইট সেটআপ করেননি (Placeholder URL)। Settings থেকে আপনার সাইট লিংক দিন।',
-            time: 'Just now',
-            read: false,
-            type: 'warning'
-          }, ...prev]);
         }
       }
     }
@@ -676,7 +804,7 @@ export default function App() {
       
       setNotifications([
         {
-          id: Date.now(),
+          id: generateId(),
           title: 'Success',
           message: 'Saved successfully',
           time: 'Just now',
@@ -694,7 +822,7 @@ export default function App() {
       setConfigError(error.message || 'Failed to update configuration');
       setNotifications([
         {
-          id: Date.now(),
+          id: generateId(),
           title: 'Save Error',
           message: error.message,
           time: 'Just now',
@@ -762,7 +890,7 @@ export default function App() {
 
       setNotifications(prev => [
         {
-          id: Date.now(),
+          id: generateId(),
           title: 'WooCommerce Order Received',
           message: `New order ${newOrder.id} from ${newOrder.customer}`,
           time: 'Just now',
@@ -995,7 +1123,7 @@ export default function App() {
 
   // Function to add a toast
   const addToast = (title: string, message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    const id = Date.now();
+    const id = generateId();
     const newToast = { id, title, message, type };
     setToasts(prev => [newToast, ...prev].slice(0, 3)); // Show max 3 at a time
     
@@ -1348,7 +1476,7 @@ export default function App() {
     syncStatsToSupabase(newSales, newCount);
     setNotifications([
       {
-        id: Date.now(),
+        id: generateId(),
         title: 'New Order Received',
         message: `Order ${newOrderId} created for new customer ${newCustomerData.name}`,
         time: 'Just now',
@@ -1383,7 +1511,7 @@ export default function App() {
       }
       setNotifications([
         {
-          id: Date.now(),
+          id: generateId(),
           title: 'Order Deleted',
           message: `Order ${orderId} has been removed.`,
           time: 'Just now',
@@ -1452,7 +1580,7 @@ export default function App() {
       } 
 
       setNotifications([{
-        id: Date.now(),
+        id: generateId(),
         title: 'Sync Engine',
         message: 'All WooCommerce data synchronized via Edge Function.',
         time: 'Just now',
@@ -1508,7 +1636,7 @@ export default function App() {
       }
       setNotifications([
         {
-          id: Date.now(),
+          id: generateId(),
           title: 'Product Removed',
           message: `Product ${productId} has been deleted successfully.`,
           time: 'Just now',
@@ -1787,7 +1915,7 @@ export default function App() {
     syncStatsToSupabase(newSales, newCount);
     setNotifications([
       {
-        id: Date.now(),
+        id: generateId(),
         title: 'New Order Received',
         message: `New order ${newOrder.id} for ${newOrder.customer} has been placed.`,
         time: 'Just now',
@@ -3623,180 +3751,99 @@ export default function App() {
         )}
 
         {currentView === 'sync' && (
-          <div className="max-w-4xl mx-auto space-y-6">
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-xl p-8">
-              <div className="flex items-center gap-4 mb-8">
-                <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600">
-                  <RefreshCw size={24} />
+          <div className="max-w-4xl mx-auto space-y-6 pb-20">
+            {/* Header with Title and API Settings button */}
+            <div className="flex items-center justify-between mb-8">
+              <h2 className="text-2xl font-bold text-slate-800">WooCommerce</h2>
+              <button 
+                onClick={() => setCurrentView('settings')}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-lg shadow-sm hover:bg-slate-800 transition-all active:scale-95"
+              >
+                <Settings size={14} />
+                <span>API Settings</span>
+              </button>
+            </div>
+
+            {/* Sync Cards Container */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {[
+                { 
+                  id: 'orders', 
+                  label: 'Orders', 
+                  icon: ShoppingCart, 
+                  color: 'bg-indigo-600', 
+                  handler: getWooStats, 
+                  status: syncStatus.orders 
+                },
+                { 
+                  id: 'products', 
+                  label: 'Products', 
+                  icon: Package, 
+                  color: 'bg-indigo-600', 
+                  handler: getWooProducts, 
+                  status: syncStatus.products 
+                },
+                { 
+                  id: 'categories', 
+                  label: 'Categories', 
+                  icon: Layers, 
+                  color: 'bg-indigo-600', 
+                  handler: getWooCategories, 
+                  status: syncStatus.categories 
+                },
+              ].map((card) => (
+                <div key={card.id} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 hover:shadow-md transition-shadow">
+                  <h3 className="text-xl font-bold text-slate-800 mb-6">{card.label}</h3>
+                  
+                  <button 
+                    onClick={() => card.handler()}
+                    disabled={card.status.loading}
+                    className={cn(
+                      "w-full py-4 rounded-xl text-white font-bold transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50",
+                      card.color
+                    )}
+                  >
+                    {card.status.loading ? (
+                      <RefreshCw size={18} className="animate-spin" />
+                    ) : (
+                      'Sync Now'
+                    )}
+                  </button>
+
+                  <div className="mt-6 flex items-center gap-2">
+                    <span className="text-xs font-medium text-slate-400">Last Update:</span>
+                    <span className="text-xs font-bold text-slate-600">{card.status.lastUpdate}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Footer Legend or Action */}
+            <div className="bg-blue-50 rounded-2xl p-6 border border-blue-100 mt-12">
+              <div className="flex gap-4">
+                <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600 shrink-0">
+                  <Info size={20} />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-slate-800">WooCommerce Sync Engine</h3>
-                  <p className="text-sm text-slate-500">Manage real-time data synchronization with your store</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Sync Status</span>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                    <span className="text-sm font-bold text-slate-700">Connected</span>
-                  </div>
-                </div>
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Last Update</span>
-                  <span className="text-sm font-bold text-slate-700">Just Now</span>
-                </div>
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Synced Items</span>
-                  <span className="text-sm font-bold text-slate-700">{orders.length + products.length + categories.length}</span>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <button 
-                  onClick={() => {
-                    handleRefresh();
-                    setNotifications([{
-                      id: Date.now(),
-                      title: 'Manual Sync Started',
-                      message: 'Fetching latest data from WooCommerce...',
-                      time: 'Just now',
-                      read: false
-                    }, ...notifications]);
-                  }}
-                  disabled={isRefreshing}
-                  className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-all active:scale-[0.98] disabled:opacity-50"
-                >
-                  <RefreshCw size={18} className={isRefreshing ? "animate-spin" : ""} />
-                  {isRefreshing ? 'Synchronizing Data...' : 'Sync All Data Now'}
-                </button>
-                <p className="text-[10px] text-center text-slate-400 font-medium italic">
-                  This will pull latest orders, products, and statistics from your WooCommerce store.
-                </p>
-              </div>
-
-              <div className="mt-12 pt-8 border-t border-slate-100">
-                <h4 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2">
-                  <ShieldCheck size={18} className="text-slate-400" />
-                  Database Setup (Required)
-                </h4>
-                <div className="bg-slate-900 rounded-xl p-6 relative group">
-                  <div className="flex justify-between items-center mb-4">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">SQL Migration Script (Run in Supabase)</span>
-                    <button 
-                      onClick={() => {
-                        const sql = `ALTER TABLE settings 
-ADD COLUMN IF NOT EXISTS business_name TEXT,
-ADD COLUMN IF NOT EXISTS business_phone TEXT,
-ADD COLUMN IF NOT EXISTS business_website TEXT,
-ADD COLUMN IF NOT EXISTS steadfast_api_key TEXT,
-ADD COLUMN IF NOT EXISTS steadfast_secret_key TEXT;
-
-ALTER TABLE orders 
-ADD COLUMN IF NOT EXISTS product_category TEXT,
-ADD COLUMN IF NOT EXISTS consignment_id TEXT,
-ADD COLUMN IF NOT EXISTS tracking_code TEXT,
-ADD COLUMN IF NOT EXISTS invoice_id TEXT,
-ADD COLUMN IF NOT EXISTS customer_phone TEXT,
-ADD COLUMN IF NOT EXISTS customer_address TEXT,
-ADD COLUMN IF NOT EXISTS total_amount DECIMAL,
-ADD COLUMN IF NOT EXISTS raw_webhook_payload JSONB;
-
-CREATE TABLE IF NOT EXISTS categories (
-  user_id UUID REFERENCES auth.users(id),
-  category_id TEXT,
-  name TEXT,
-  description TEXT,
-  count INTEGER,
-  updated_at TIMESTAMP WITH TIME ZONE,
-  PRIMARY KEY (user_id, category_id)
-);
-
-CREATE TABLE IF NOT EXISTS products (
-  user_id UUID REFERENCES auth.users(id),
-  product_id TEXT,
-  name TEXT,
-  price DECIMAL,
-  stock_status TEXT,
-  updated_at TIMESTAMP WITH TIME ZONE,
-  PRIMARY KEY (user_id, product_id)
-);`;
-                        navigator.clipboard.writeText(sql);
-                        setNotifications([{id: Date.now(), title: 'Copied', message: 'SQL copied to clipboard', time: 'Just now', read: false}, ...notifications]);
-                      }}
-                      className="text-[10px] text-blue-400 font-bold hover:text-blue-300 uppercase tracking-widest transition-colors"
-                    >
-                      Copy SQL
-                    </button>
-                  </div>
-                  <pre className="text-xs font-mono text-blue-100/80 overflow-x-auto whitespace-pre-wrap leading-relaxed border border-blue-500/20 p-4 rounded-lg bg-slate-950">
-                    {`-- IMPORTANT: ONLY run this SQL code in Supabase
--- DO NOT paste React/JavaScript code here
-
-ALTER TABLE settings 
-ADD COLUMN IF NOT EXISTS business_name TEXT,
-ADD COLUMN IF NOT EXISTS business_phone TEXT,
-ADD COLUMN IF NOT EXISTS business_website TEXT,
-ADD COLUMN IF NOT EXISTS steadfast_api_key TEXT,
-ADD COLUMN IF NOT EXISTS steadfast_secret_key TEXT;
-
-ALTER TABLE orders 
-ADD COLUMN IF NOT EXISTS product_category TEXT,
-ADD COLUMN IF NOT EXISTS consignment_id TEXT,
-ADD COLUMN IF NOT EXISTS tracking_code TEXT,
-ADD COLUMN IF NOT EXISTS invoice_id TEXT,
-ADD COLUMN IF NOT EXISTS customer_phone TEXT,
-ADD COLUMN IF NOT EXISTS customer_address TEXT,
-ADD COLUMN IF NOT EXISTS total_amount DECIMAL,
-ADD COLUMN IF NOT EXISTS raw_webhook_payload JSONB;
-
-CREATE TABLE IF NOT EXISTS categories (
-  user_id UUID REFERENCES auth.users(id),
-  category_id TEXT,
-  name TEXT,
-  description TEXT,
-  count INTEGER,
-  updated_at TIMESTAMP WITH TIME ZONE,
-  PRIMARY KEY (user_id, category_id)
-);
-
-CREATE TABLE IF NOT EXISTS products (
-  user_id UUID REFERENCES auth.users(id),
-  product_id TEXT,
-  name TEXT,
-  price DECIMAL,
-  stock_status TEXT,
-  updated_at TIMESTAMP WITH TIME ZONE,
-  PRIMARY KEY (user_id, product_id)
-);`}
-                  </pre>
-                </div>
-                <div className="mt-4 p-5 bg-red-50 border-2 border-red-200 rounded-xl animate-pulse">
-                  <p className="text-xs text-red-800 leading-relaxed font-bold flex items-start gap-2">
-                    <AlertCircle size={18} className="shrink-0 mt-0.5" />
-                    <span>
-                      সতর্কবার্তা: আপনি সুপাবেস (Supabase) এ ভুল কোড পেস্ট করছেন। 
-                      নিচের নীল বক্সের কোডটি ছাড়া অন্য কোনো কোড (JavaScript) সুপাবেসে কাজ করবে না। 
-                      দয়া করে শুধুমাত্র নিচের নীল বক্সের ভিতর থাকা SQL কোডটি কপি করে সুপাবেসের SQL Editor-এ রান করুন।
-                    </span>
+                  <h4 className="text-sm font-bold text-blue-900 mb-1">Manual Sync Information</h4>
+                  <p className="text-xs text-blue-800 leading-relaxed opacity-80">
+                    এখানে Sync Now বাটনে ক্লিক করলে আপনার ওয়েবসাইট থেকে লেটেস্ট ডাটা সরাসরি আপনার ড্যাশবোর্ডে চলে আসবে। রিয়েল-টাইম সিঙ্ক এর জন্য Webhooks ব্যবহার করুন।
                   </p>
                 </div>
               </div>
-
-              {categories.length > 0 && (
-                <div className="mt-8 pt-8 border-t border-slate-100">
-                  <h4 className="text-sm font-bold text-slate-800 mb-4">Synced Categories</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {categories.map(cat => (
-                      <span key={cat.id} className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium border border-slate-200">
-                        {cat.name} ({cat.count})
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
+
+            {/* Database Setup (Hidden by default but available via settings ideally) */}
+            <details className="mt-8">
+               <summary className="text-xs font-bold text-slate-400 cursor-pointer hover:text-slate-600">Advanced Database Setup (Run SQL if needed)</summary>
+               <div className="mt-4 bg-slate-900 rounded-xl p-6">
+                 <pre className="text-[10px] font-mono text-emerald-400 overflow-x-auto">
+                   {`ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_phone TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_address TEXT;
+-- Run more SQL from Sync dashboard if tables are missing`}
+                 </pre>
+               </div>
+            </details>
           </div>
         )}
 
@@ -4123,7 +4170,7 @@ CREATE TABLE IF NOT EXISTS products (
                         <AnimatedCopyButton 
                           text={webhookSecret} 
                           onCopy={() => {
-                            setNotifications([{id: Date.now(), title: 'Copied', message: 'Secret key copied', time: 'Just now', read: false}, ...notifications]);
+                            setNotifications([{id: generateId(), title: 'Copied', message: 'Secret key copied', time: 'Just now', read: false}, ...notifications]);
                           }} 
                         />
                       </div>
@@ -4155,7 +4202,7 @@ CREATE TABLE IF NOT EXISTS products (
                           <AnimatedCopyButton 
                             text={item.value} 
                             onCopy={() => {
-                              setNotifications([{id: Date.now(), title: 'Copied', message: 'Webhook URL copied', time: 'Just now', read: false}, ...notifications]);
+                              setNotifications([{id: generateId(), title: 'Copied', message: 'Webhook URL copied', time: 'Just now', read: false}, ...notifications]);
                             }} 
                           />
                         </div>
