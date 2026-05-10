@@ -74,6 +74,27 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const generateDeterministicSecret = (userId: string) => {
+  if (!userId) return '';
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  // Simple deterministic hash-like generator for UI stability
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = ((hash << 5) - hash) + userId.charCodeAt(i);
+    hash |= 0;
+  }
+  
+  // Use hash as seed
+  let seed = Math.abs(hash);
+  for (let i = 0; i < 32; i++) {
+    seed = (seed * 16807) % 2147483647;
+    const index = seed % chars.length;
+    result += chars.charAt(index);
+  }
+  return result;
+};
+
 let sequenceId = Date.now();
 const generateId = () => {
   const now = Date.now();
@@ -315,11 +336,11 @@ export default function App() {
   const generateWebhookSecret = useCallback(() => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let result = '';
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 32; i++) {
       result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     setWooConfig(prev => ({ ...prev, webhookSecret: result }));
-  }, []);
+  }, [setWooConfig]);
 
   const [isConfigSaving, setIsConfigSaving] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
@@ -329,7 +350,7 @@ export default function App() {
     if (!session?.user || !supabase) return;
     
     const timer = setTimeout(async () => {
-      if (wooConfig.url || wooConfig.key || wooConfig.secret || steadfastConfig.apiKey || steadfastConfig.secretKey) {
+      if (wooConfig.url || wooConfig.key || wooConfig.secret || wooConfig.webhookSecret || steadfastConfig.apiKey || steadfastConfig.secretKey) {
         await supabase
           .from('settings')
           .upsert({
@@ -668,12 +689,7 @@ export default function App() {
             // Map settings (handling potential column naming differences)
             let loadedWebhookSecret = settingsData.webhook_secret;
             if (!loadedWebhookSecret) {
-              const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-              let result = '';
-              for (let i = 0; i < 32; i++) {
-                result += chars.charAt(Math.floor(Math.random() * chars.length));
-              }
-              loadedWebhookSecret = result;
+              loadedWebhookSecret = generateDeterministicSecret(session.user.id);
             }
 
             setWooConfig({
@@ -704,13 +720,9 @@ export default function App() {
               }));
             }
           } else {
-            // New user, generate a default webhook secret
-            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-            let result = '';
-            for (let i = 0; i < 32; i++) {
-              result += chars.charAt(Math.floor(Math.random() * chars.length));
-            }
-            setWooConfig(prev => ({ ...prev, webhookSecret: result }));
+            // New user, generate a deterministic default webhook secret based on User ID
+            const deterministicSecret = generateDeterministicSecret(session.user.id);
+            setWooConfig(prev => ({ ...prev, webhookSecret: deterministicSecret }));
           }
 
           // Load synced entities
