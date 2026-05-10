@@ -3543,7 +3543,7 @@ CREATE TABLE IF NOT EXISTS products (
         {currentView === 'dashboard' && (
           <>
             {/* Stats Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
               <StatsCard label="Total Sales" value={wooStats.totalSales.toLocaleString()} symbol />
               <StatsCard label="Orders" value={wooStats.orderCount.toLocaleString()} subtext="Transactions" subtextColor="text-slate-400" />
               <StatsCard label="Item" value={products.length.toLocaleString()} subtext="SKU in Inventory" subtextColor="text-slate-400" />
