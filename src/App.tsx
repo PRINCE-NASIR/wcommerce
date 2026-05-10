@@ -666,11 +666,21 @@ export default function App() {
 
           if (settingsData) {
             // Map settings (handling potential column naming differences)
+            let loadedWebhookSecret = settingsData.webhook_secret;
+            if (!loadedWebhookSecret) {
+              const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+              let result = '';
+              for (let i = 0; i < 32; i++) {
+                result += chars.charAt(Math.floor(Math.random() * chars.length));
+              }
+              loadedWebhookSecret = result;
+            }
+
             setWooConfig({
               url: settingsData.woo_url || '',
               key: settingsData.woo_key || settingsData.key || '',
               secret: settingsData.woo_secret || '',
-              webhookSecret: settingsData.webhook_secret || ''
+              webhookSecret: loadedWebhookSecret
             });
 
             setBusinessDetails({
@@ -693,6 +703,14 @@ export default function App() {
                 avgOrderValue: settingsData.order_count > 0 ? settingsData.total_sales / settingsData.order_count : 0
               }));
             }
+          } else {
+            // New user, generate a default webhook secret
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            let result = '';
+            for (let i = 0; i < 32; i++) {
+              result += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            setWooConfig(prev => ({ ...prev, webhookSecret: result }));
           }
 
           // Load synced entities
