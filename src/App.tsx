@@ -40,9 +40,12 @@ import {
   Edit,
   Save,
   Info,
+  ExternalLink,
+  X,
   Eye,
   EyeOff,
   ShieldCheck,
+  ShieldAlert,
   Key,
   LogIn,
   LogOut,
@@ -274,6 +277,12 @@ export default function App() {
     webhookSecret: ''
   });
 
+  const [steadfastConfig, setSteadfastConfig] = useState({
+    apiKey: '',
+    secretKey: '',
+    connected: false
+  });
+
   const [businessDetails, setBusinessDetails] = useState({
     name: '',
     phone: '',
@@ -305,7 +314,7 @@ export default function App() {
     if (!session?.user || !supabase) return;
     
     const timer = setTimeout(async () => {
-      if (wooConfig.url || wooConfig.key || wooConfig.secret) {
+      if (wooConfig.url || wooConfig.key || wooConfig.secret || steadfastConfig.apiKey || steadfastConfig.secretKey) {
         await supabase
           .from('settings')
           .upsert({
@@ -314,13 +323,15 @@ export default function App() {
             woo_key: wooConfig.key,
             woo_secret: wooConfig.secret,
             webhook_secret: wooConfig.webhookSecret,
+            steadfast_api_key: steadfastConfig.apiKey,
+            steadfast_secret_key: steadfastConfig.secretKey,
             updated_at: new Date().toISOString()
           }, { onConflict: 'user_id' });
       }
     }, 1500);
 
     return () => clearTimeout(timer);
-  }, [wooConfig, session, supabase]);
+  }, [wooConfig, steadfastConfig, session, supabase]);
 
   // WooCommerce Status Mapper
   const mapWooStatus = (status: string) => {
@@ -510,6 +521,12 @@ export default function App() {
               name: settingsData.business_name || '',
               phone: settingsData.business_phone || '',
               website: settingsData.business_website || ''
+            });
+
+            setSteadfastConfig({
+              apiKey: settingsData.steadfast_api_key || '',
+              secretKey: settingsData.steadfast_secret_key || '',
+              connected: !!(settingsData.steadfast_api_key && settingsData.steadfast_secret_key)
             });
 
             if (settingsData.total_sales !== undefined) {
@@ -938,13 +955,36 @@ export default function App() {
 
   const [notifications, setNotifications] = useState<{id: number, title: string, message: string, time: string, read: boolean, orderId?: string}[]>([]);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [toasts, setToasts] = useState<any[]>([]);
+
+  // Function to add a toast
+  const addToast = (title: string, message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = Date.now();
+    const newToast = { id, title, message, type };
+    setToasts(prev => [newToast, ...prev].slice(0, 3)); // Show max 3 at a time
+    
+    // Add to general notifications as well
+    setNotifications(prev => [{
+      id,
+      title,
+      message,
+      time: 'Just now',
+      read: false,
+      type
+    }, ...prev]);
+
+    // Auto remove toast after 5 seconds
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 5000);
+  };
 
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
 
   // New States for Functionality
-  const [currentView, setCurrentView] = useState<'dashboard' | 'orders' | 'products' | 'purchases' | 'customers' | 'settings' | 'profile' | 'sync'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'orders' | 'products' | 'purchases' | 'customers' | 'settings' | 'profile' | 'sync' | 'steadfast'>('dashboard');
   const [orders, setOrders] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
@@ -2822,6 +2862,15 @@ export default function App() {
                   }}
                 />
                 <SidebarItem 
+                  icon={Truck} 
+                  label="Steadfast" 
+                  active={currentView === 'steadfast'} 
+                  onClick={() => {
+                    setCurrentView('steadfast');
+                    setSidebarOpen(false);
+                  }}
+                />
+                <SidebarItem 
                   icon={ShoppingBag} 
                   label="Orders" 
                   hasDropdown 
@@ -3017,6 +3066,7 @@ export default function App() {
              currentView === 'products' ? 'Inventory Management' : 
              currentView === 'settings' ? 'API Settings' :
              currentView === 'sync' ? 'Sync Dashboard' :
+             currentView === 'steadfast' ? 'Steadfast Courier' :
              currentView === 'profile' ? 'User Profile' :
              'Expenditure & Purchases'}
           </h1>
@@ -3107,6 +3157,159 @@ export default function App() {
           </div>
         </div>
 
+        {currentView === 'steadfast' && (
+          <div className="space-y-6">
+            <div className="bg-white border border-slate-200 rounded-3xl p-8 overflow-hidden relative">
+              <div className="absolute top-0 right-0 p-8 opacity-5">
+                <Truck size={120} />
+              </div>
+              <div className="relative">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center shadow-inner">
+                    <Truck size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-slate-800">Steadfast Integration</h3>
+                    <p className="text-sm text-slate-500">Automate your courier bookings directly from orders</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="space-y-6">
+                    <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100">
+                      <h4 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2">
+                        <Key size={16} className="text-blue-500" />
+                        Courier Credentials
+                      </h4>
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Connection Status</label>
+                          <div className={cn(
+                            "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                            steadfastConfig.connected ? "bg-green-100 text-green-600" : "bg-slate-200 text-slate-500"
+                          )}>
+                            {steadfastConfig.connected ? (
+                              <><CheckCircle2 size={10} /> Connected</>
+                            ) : (
+                              <><ShieldAlert size={10} /> Disconnected</>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div>
+                            <input 
+                              type={showKeys ? "text" : "password"} 
+                              placeholder="Steadfast API Key"
+                              value={steadfastConfig.apiKey}
+                              onChange={(e) => setSteadfastConfig(prev => ({ ...prev, apiKey: e.target.value }))}
+                              className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all font-mono"
+                            />
+                          </div>
+                          <div>
+                            <input 
+                              type={showKeys ? "text" : "password"} 
+                              placeholder="Steadfast Secret Key"
+                              value={steadfastConfig.secretKey}
+                              onChange={(e) => setSteadfastConfig(prev => ({ ...prev, secretKey: e.target.value }))}
+                              className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all font-mono"
+                            />
+                          </div>
+                          <div className="flex items-center gap-3 mt-4">
+                            <button 
+                              onClick={() => setShowKeys(!showKeys)}
+                              className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-slate-600 transition-colors"
+                              title={showKeys ? "Hide Keys" : "Show Keys"}
+                            >
+                              {showKeys ? <EyeOff size={18} /> : <Eye size={18} />}
+                            </button>
+                            <button 
+                              onClick={async () => {
+                                // Basic validation for API Key and Secret
+                                const keyRegex = /^[a-zA-Z0-9_\-]{15,}$/;
+                                if (!keyRegex.test(steadfastConfig.apiKey) || !keyRegex.test(steadfastConfig.secretKey)) {
+                                  addToast('Invalid Format', 'Please enter valid Steadfast API and Secret keys.', 'error');
+                                  return;
+                                }
+
+                                setIsConfigSaving(true);
+                                try {
+                                  await supabase.from('settings').upsert({
+                                    user_id: session?.user?.id,
+                                    steadfast_api_key: steadfastConfig.apiKey,
+                                    steadfast_secret_key: steadfastConfig.secretKey,
+                                    updated_at: new Date().toISOString()
+                                  }, { onConflict: 'user_id' });
+                                  
+                                  setSteadfastConfig(prev => ({ ...prev, connected: true }));
+                                  addToast('Success', 'Steadfast Connection Activated', 'success');
+                                } catch (e) {
+                                  console.error(e);
+                                  addToast('Error', 'Failed to save credentials', 'error');
+                                } finally {
+                                  setIsConfigSaving(false);
+                                }
+                              }}
+                              disabled={isConfigSaving}
+                              className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-2.5 rounded-xl text-sm transition-all shadow-lg shadow-orange-200 disabled:opacity-50 flex items-center justify-center gap-2"
+                            >
+                              {isConfigSaving ? (
+                                <>
+                                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                  <span>Verifying...</span>
+                                </>
+                              ) : 'Save & Activate Integration'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100">
+                      <h4 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2">
+                        <RefreshCw size={16} className="text-blue-500" />
+                        Webhook Configuration
+                      </h4>
+                      <div className="space-y-4">
+                        <div className="p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Receiver URL</label>
+                          <div className="flex items-center gap-2">
+                            <code className="flex-1 text-[10px] text-blue-600 bg-slate-50 p-2 rounded border border-slate-100 break-all">
+                              {import.meta.env.VITE_SUPABASE_URL}/functions/v1/steadfast-webhook-receiver
+                            </code>
+                            <button 
+                              onClick={() => {
+                                navigator.clipboard.writeText(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/steadfast-webhook-receiver`);
+                                addToast('Copied', 'Webhook URL copied to clipboard', 'success');
+                              }}
+                              className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-400 hover:text-blue-500 transition-colors"
+                            >
+                              <Save size={14} />
+                            </button>
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                            Provide this URL in your <span className="font-bold">Steadfast Panel → Webhook Settings</span> to receive real-time status updates.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 flex flex-col items-center justify-center text-center min-h-[220px]">
+                      <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4">
+                        <ShieldCheck size={32} />
+                      </div>
+                      <h4 className="text-lg font-bold text-slate-800 mb-2">Automated Integration</h4>
+                      <p className="text-sm text-slate-500 max-w-xs">
+                        Your courier bookings are now fully automated. New orders will be sent to Steadfast instantly once your credentials are saved.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {currentView === 'sync' && (
           <div className="max-w-4xl mx-auto space-y-6">
             <div className="bg-white rounded-2xl border border-slate-100 shadow-xl p-8">
@@ -3174,10 +3377,19 @@ export default function App() {
                         const sql = `ALTER TABLE settings 
 ADD COLUMN IF NOT EXISTS business_name TEXT,
 ADD COLUMN IF NOT EXISTS business_phone TEXT,
-ADD COLUMN IF NOT EXISTS business_website TEXT;
+ADD COLUMN IF NOT EXISTS business_website TEXT,
+ADD COLUMN IF NOT EXISTS steadfast_api_key TEXT,
+ADD COLUMN IF NOT EXISTS steadfast_secret_key TEXT;
 
 ALTER TABLE orders 
-ADD COLUMN IF NOT EXISTS product_category TEXT;
+ADD COLUMN IF NOT EXISTS product_category TEXT,
+ADD COLUMN IF NOT EXISTS consignment_id TEXT,
+ADD COLUMN IF NOT EXISTS tracking_code TEXT,
+ADD COLUMN IF NOT EXISTS invoice_id TEXT,
+ADD COLUMN IF NOT EXISTS customer_phone TEXT,
+ADD COLUMN IF NOT EXISTS customer_address TEXT,
+ADD COLUMN IF NOT EXISTS total_amount DECIMAL,
+ADD COLUMN IF NOT EXISTS raw_webhook_payload JSONB;
 
 CREATE TABLE IF NOT EXISTS categories (
   user_id UUID REFERENCES auth.users(id),
@@ -3213,10 +3425,19 @@ CREATE TABLE IF NOT EXISTS products (
 ALTER TABLE settings 
 ADD COLUMN IF NOT EXISTS business_name TEXT,
 ADD COLUMN IF NOT EXISTS business_phone TEXT,
-ADD COLUMN IF NOT EXISTS business_website TEXT;
+ADD COLUMN IF NOT EXISTS business_website TEXT,
+ADD COLUMN IF NOT EXISTS steadfast_api_key TEXT,
+ADD COLUMN IF NOT EXISTS steadfast_secret_key TEXT;
 
 ALTER TABLE orders 
-ADD COLUMN IF NOT EXISTS product_category TEXT;
+ADD COLUMN IF NOT EXISTS product_category TEXT,
+ADD COLUMN IF NOT EXISTS consignment_id TEXT,
+ADD COLUMN IF NOT EXISTS tracking_code TEXT,
+ADD COLUMN IF NOT EXISTS invoice_id TEXT,
+ADD COLUMN IF NOT EXISTS customer_phone TEXT,
+ADD COLUMN IF NOT EXISTS customer_address TEXT,
+ADD COLUMN IF NOT EXISTS total_amount DECIMAL,
+ADD COLUMN IF NOT EXISTS raw_webhook_payload JSONB;
 
 CREATE TABLE IF NOT EXISTS categories (
   user_id UUID REFERENCES auth.users(id),
@@ -3949,6 +4170,47 @@ CREATE TABLE IF NOT EXISTS products (
         </div>
       )}
     </main>
+
+      {/* Global Toast Notifications */}
+      <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-3 w-full max-w-sm px-4 pointer-events-none">
+        <AnimatePresence>
+          {toasts.map(toast => (
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, y: -20, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
+              className={cn(
+                "pointer-events-auto p-4 rounded-2xl shadow-2xl border flex items-center gap-3 backdrop-blur-md",
+                toast.type === 'error' ? "bg-red-50/90 border-red-100 text-red-800" :
+                toast.type === 'success' ? "bg-green-50/90 border-green-100 text-green-800" :
+                "bg-blue-50/90 border-blue-100 text-blue-800"
+              )}
+            >
+              <div className={cn(
+                "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
+                toast.type === 'error' ? "bg-red-100 text-red-600" :
+                toast.type === 'success' ? "bg-green-100 text-green-600" :
+                "bg-blue-100 text-blue-600"
+              )}>
+                {toast.type === 'error' ? <ShieldAlert size={18} /> : 
+                 toast.type === 'success' ? <CheckCircle2 size={18} /> : 
+                 <Info size={18} />}
+              </div>
+              <div className="flex flex-col">
+                <span className="text-sm font-bold">{toast.title}</span>
+                <span className="text-xs opacity-80 leading-tight">{toast.message}</span>
+              </div>
+              <button 
+                onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
+                className="ml-auto p-1 hover:bg-black/5 rounded-lg transition-colors"
+              >
+                <X size={14} />
+              </button>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
 
       {/* Footer / Credits */}
       <footer className="py-8 text-center text-slate-400 text-[10px] font-medium uppercase tracking-[0.2em] opacity-60">
