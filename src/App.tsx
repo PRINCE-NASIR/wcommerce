@@ -312,22 +312,14 @@ export default function App() {
     website: ''
   });
 
-  const [webhookSecret, setWebhookSecret] = useState('');
-
   const generateWebhookSecret = useCallback(() => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let result = '';
     for (let i = 0; i < 20; i++) {
       result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    setWebhookSecret(result);
+    setWooConfig(prev => ({ ...prev, webhookSecret: result }));
   }, []);
-
-  useEffect(() => {
-    if (!webhookSecret) {
-      generateWebhookSecret();
-    }
-  }, [webhookSecret, generateWebhookSecret]);
 
   const [isConfigSaving, setIsConfigSaving] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
@@ -4216,7 +4208,7 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_address TEXT;
                       <input 
                         type="text" 
                         readOnly 
-                        value={webhookSecret}
+                        value={wooConfig.webhookSecret}
                         className="w-full px-4 py-3 text-sm font-medium text-slate-700 bg-slate-50 rounded-xl text-center outline-none border border-transparent focus:border-blue-200 transition-all"
                       />
                       <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -4228,7 +4220,7 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_address TEXT;
                           <span>Regenerate</span>
                         </button>
                         <AnimatedCopyButton 
-                          text={webhookSecret} 
+                          text={wooConfig.webhookSecret} 
                           onCopy={() => {
                             setNotifications([{id: generateId(), title: 'Copied', message: 'Secret key copied', time: 'Just now', read: false}, ...notifications]);
                           }} 
