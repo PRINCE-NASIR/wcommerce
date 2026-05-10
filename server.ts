@@ -34,6 +34,11 @@ const getWooConfig = (req: express.Request) => {
   
   if (!rawUrl || !key || !secret) return null;
 
+  // Detect placeholder URLs
+  if (rawUrl.includes('test.local') || rawUrl.includes('example.com') || rawUrl.includes('your-website.com')) {
+    return { error: 'placeholder' };
+  }
+
   // Normalize URL
   let url = rawUrl.trim().replace(/\/$/, '');
   if (url && !url.startsWith('http')) {
@@ -63,14 +68,29 @@ app.get('/api/products', async (req, res) => {
         details: 'Invalid or missing WooCommerce URL and API Keys. Use https://yourdomain.com format.' 
       });
     }
-    const response = await axios.get(`${config.url}/wp-json/wc/v3/products?per_page=100`, {
-      headers: { Authorization: `Basic ${config.auth}` },
+    
+    if ('error' in config && config.error === 'placeholder') {
+      return res.status(400).json({ 
+        error: 'Placeholder URL detected', 
+        details: 'You are using a placeholder website URL (test.local). Please go to Settings and enter your actual WooCommerce website address.' 
+      });
+    }
+
+    const response = await axios.get(`${(config as any).url}/wp-json/wc/v3/products?per_page=100`, {
+      headers: { Authorization: `Basic ${(config as any).auth}` },
       timeout: 10000
     });
     res.json(response.data);
   } catch (error: any) {
-    const status = error.response?.status || 500;
-    const message = error.response?.data?.message || error.message;
+    let status = error.response?.status || 500;
+    let message = error.response?.data?.message || error.message;
+    
+    // Handle DNS/Network errors specifically
+    if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN' || error.code === 'ECONNREFUSED') {
+      status = 404;
+      message = `Could not reach website. Please check if the URL is correct and the site is online. (Error: ${error.code})`;
+    }
+
     console.error(`WooCommerce API Error (Products) [${status}]:`, message);
     res.status(status).json({ 
       error: 'Failed to fetch products',
@@ -89,17 +109,31 @@ app.delete('/api/products/:id', async (req, res) => {
         details: 'Invalid or missing WooCommerce URL and API Keys.'
       });
     }
+
+    if ('error' in config && config.error === 'placeholder') {
+      return res.status(400).json({ 
+        error: 'Placeholder URL detected', 
+        details: 'Please configure your actual WooCommerce URL in Settings.' 
+      });
+    }
+
     const { id } = req.params;
     const cleanId = id.replace('PRD', '');
     
-    const response = await axios.delete(`${config.url}/wp-json/wc/v3/products/${cleanId}?force=true`, {
-      headers: { Authorization: `Basic ${config.auth}` },
+    const response = await axios.delete(`${(config as any).url}/wp-json/wc/v3/products/${cleanId}?force=true`, {
+      headers: { Authorization: `Basic ${(config as any).auth}` },
       timeout: 10000
     });
     res.json({ success: true, data: response.data });
   } catch (error: any) {
-    const status = error.response?.status || 500;
-    const message = error.response?.data?.message || error.message;
+    let status = error.response?.status || 500;
+    let message = error.response?.data?.message || error.message;
+
+    if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN' || error.code === 'ECONNREFUSED') {
+      status = 404;
+      message = `Could not reach website. (Error: ${error.code})`;
+    }
+
     console.error(`WooCommerce API Error (Delete Product) [${status}]:`, message);
     res.status(status).json({ 
       error: 'Failed to delete product',
@@ -118,8 +152,16 @@ app.get('/api/stats', async (req, res) => {
         details: 'Invalid or missing WooCommerce URL and API Keys. Use https://yourdomain.com format.'
       });
     }
-    const response = await axios.get(`${config.url}/wp-json/wc/v3/orders?per_page=100&status=completed,processing`, {
-      headers: { Authorization: `Basic ${config.auth}` },
+
+    if ('error' in config && config.error === 'placeholder') {
+      return res.status(400).json({ 
+        error: 'Placeholder URL detected', 
+        details: 'Please configure your actual WooCommerce URL in Settings.' 
+      });
+    }
+
+    const response = await axios.get(`${(config as any).url}/wp-json/wc/v3/orders?per_page=100&status=completed,processing`, {
+      headers: { Authorization: `Basic ${(config as any).auth}` },
       timeout: 10000
     });
     
@@ -135,8 +177,14 @@ app.get('/api/stats', async (req, res) => {
       recentOrders: orders.slice(0, 5)
     });
   } catch (error: any) {
-    const status = error.response?.status || 500;
-    const message = error.response?.data?.message || error.message;
+    let status = error.response?.status || 500;
+    let message = error.response?.data?.message || error.message;
+
+    if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN' || error.code === 'ECONNREFUSED') {
+      status = 404;
+      message = `Could not reach website. (Error: ${error.code})`;
+    }
+
     console.error(`WooCommerce Stats Error [${status}]:`, message);
     res.status(status).json({ 
       error: 'Failed to fetch stats',
@@ -155,14 +203,28 @@ app.get('/api/categories', async (req, res) => {
         details: 'Invalid or missing WooCommerce URL and API Keys. Use https://yourdomain.com format.'
       });
     }
-    const response = await axios.get(`${config.url}/wp-json/wc/v3/products/categories?per_page=100`, {
-      headers: { Authorization: `Basic ${config.auth}` },
+
+    if ('error' in config && config.error === 'placeholder') {
+      return res.status(400).json({ 
+        error: 'Placeholder URL detected', 
+        details: 'Please configure your actual WooCommerce URL in Settings.' 
+      });
+    }
+
+    const response = await axios.get(`${(config as any).url}/wp-json/wc/v3/products/categories?per_page=100`, {
+      headers: { Authorization: `Basic ${(config as any).auth}` },
       timeout: 10000
     });
     res.json(response.data);
   } catch (error: any) {
-    const status = error.response?.status || 500;
-    const message = error.response?.data?.message || error.message;
+    let status = error.response?.status || 500;
+    let message = error.response?.data?.message || error.message;
+
+    if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN' || error.code === 'ECONNREFUSED') {
+      status = 404;
+      message = `Could not reach website. (Error: ${error.code})`;
+    }
+
     console.error(`WooCommerce API Error (Categories) [${status}]:`, message);
     res.status(status).json({ 
       error: 'Failed to fetch categories',

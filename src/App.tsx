@@ -42,6 +42,8 @@ import {
   Info,
   ExternalLink,
   X,
+  Zap,
+  Wifi,
   Eye,
   EyeOff,
   ShieldCheck,
@@ -51,7 +53,8 @@ import {
   LogOut,
   AlertCircle,
   Trash2,
-  Check
+  Check,
+  ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -350,7 +353,11 @@ export default function App() {
   };
 
   const getWooCategories = useCallback(async () => {
-    if (!wooConfig.url || !wooConfig.key || !wooConfig.secret) return;
+    if (!wooConfig.url || wooConfig.url.includes('test.local')) {
+      setIsPlaceholder(true);
+      return;
+    }
+    if (!wooConfig.key || !wooConfig.secret) return;
     try {
       const response = await axios.get('/api/categories', {
         headers: {
@@ -369,13 +376,18 @@ export default function App() {
         setCategories(mapped);
         mapped.forEach(cat => syncCategoryToSupabase(cat));
       }
-    } catch (error) {
-      console.error('Failed to fetch categories:', error);
+    } catch (error: any) {
+      const details = error.response?.data?.details || error.message;
+      console.error('Failed to fetch categories:', details);
     }
   }, [wooConfig]);
 
   const getWooStats = useCallback(async () => {
-    if (!wooConfig.url || !wooConfig.key || !wooConfig.secret) return;
+    if (!wooConfig.url || wooConfig.url.includes('test.local')) {
+      setIsPlaceholder(true);
+      return;
+    }
+    if (!wooConfig.key || !wooConfig.secret) return;
     try {
       const response = await axios.get('/api/stats', {
         headers: {
@@ -450,13 +462,18 @@ export default function App() {
       if (error.response?.status === 401) {
         setIsBackendConfigured(false);
       } else {
-        console.error('Failed to fetch stats:', error);
+        const details = error.response?.data?.details || error.message;
+        console.error('Failed to fetch stats:', details);
       }
     }
   }, [wooConfig]);
 
   const getWooProducts = useCallback(async () => {
-    if (!wooConfig.url || !wooConfig.key || !wooConfig.secret) return;
+    if (!wooConfig.url || wooConfig.url.includes('test.local')) {
+      setIsPlaceholder(true);
+      return;
+    }
+    if (!wooConfig.key || !wooConfig.secret) return;
     try {
       const response = await axios.get('/api/products', {
         headers: {
@@ -466,6 +483,7 @@ export default function App() {
         }
       });
       if (response.data && Array.isArray(response.data)) {
+        setIsPlaceholder(false);
         const mappedProducts = response.data.map((p: any) => ({
           id: `PRD${p.id}`,
           name: p.name,
@@ -493,7 +511,21 @@ export default function App() {
       if (error.response?.status === 401) {
         setIsBackendConfigured(false);
       } else {
-        console.error('Failed to fetch products:', error);
+        const details = error.response?.data?.details || error.message;
+        console.error('Failed to fetch products:', details);
+        
+        // Push a specific notification for the user
+        if (error.response?.data?.error === 'Placeholder URL detected') {
+          setIsPlaceholder(true);
+          setNotifications(prev => [{
+            id: Date.now(),
+            title: 'Action Required',
+            message: 'আপনি এখনো আপনার ওয়েবসাইট সেটআপ করেননি (Placeholder URL)। Settings থেকে আপনার সাইট লিংক দিন।',
+            time: 'Just now',
+            read: false,
+            type: 'warning'
+          }, ...prev]);
+        }
       }
     }
   }, [wooConfig]);
@@ -985,11 +1017,18 @@ export default function App() {
 
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
+  const [isPlaceholder, setIsPlaceholder] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
 
   // New States for Functionality
-  const [currentView, setCurrentView] = useState<'dashboard' | 'orders' | 'products' | 'purchases' | 'customers' | 'settings' | 'profile' | 'sync' | 'steadfast'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'orders' | 'products' | 'purchases' | 'customers' | 'settings' | 'profile' | 'sync' | 'steadfast' | 'guide'>('dashboard');
   const [orders, setOrders] = useState<any[]>([]);
+  const [activeGuide, setActiveGuide] = useState<'woo' | 'steadfast'>('woo');
+
+  useEffect(() => {
+    const isP = wooConfig.url.includes('test.local') || wooConfig.url.includes('example.com') || !wooConfig.url;
+    setIsPlaceholder(isP);
+  }, [wooConfig.url]);
   const [products, setProducts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [purchases, setPurchases] = useState<any[]>([]);
@@ -3119,7 +3158,15 @@ export default function App() {
                 <SidebarItem icon={Store} label="Online Store" />
                 
                 <div className="mt-8 mb-4 border-t border-slate-100 pt-6">
-                  <SidebarItem icon={BookOpen} label="Learning Center" />
+                  <SidebarItem 
+                    icon={BookOpen} 
+                    label="Learning Center" 
+                    active={currentView === 'guide'}
+                    onClick={() => {
+                      setCurrentView('guide');
+                      setSidebarOpen(false);
+                    }}
+                  />
                   <SidebarItem 
                     icon={Settings} 
                     label="Settings" 
@@ -3147,6 +3194,7 @@ export default function App() {
              currentView === 'sync' ? 'Sync Dashboard' :
              currentView === 'steadfast' ? 'Steadfast Courier' :
              currentView === 'profile' ? 'User Profile' :
+             currentView === 'guide' ? 'Learning Center' :
              'Expenditure & Purchases'}
           </h1>
           <div className="flex items-center space-x-3">
@@ -3385,6 +3433,191 @@ export default function App() {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {currentView === 'guide' && (
+          <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* Header */}
+            <div className="text-center space-y-4">
+              <h3 className="text-3xl font-black text-slate-800 tracking-tight">Learning Center</h3>
+              <p className="text-slate-500 max-w-lg mx-auto text-sm">আপনার ব্যবসা অটোমেশন করার পূর্ণাঙ্গ গাইডলাইন এখানে পাবেন।</p>
+            </div>
+
+            {/* Tab Navigation */}
+            <div className="flex p-1 bg-slate-100 rounded-2xl max-w-md mx-auto">
+              <button 
+                onClick={() => setActiveGuide('woo')}
+                className={cn(
+                  "flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2",
+                  activeGuide === 'woo' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                )}
+              >
+                <RefreshCw size={14} /> Website Integration
+              </button>
+              <button 
+                onClick={() => setActiveGuide('steadfast')}
+                className={cn(
+                  "flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2",
+                  activeGuide === 'steadfast' ? "bg-white text-orange-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                )}
+              >
+                <Truck size={14} /> Steadfast Courier
+              </button>
+            </div>
+
+            {/* Content Area */}
+            <AnimatePresence mode="wait">
+              {activeGuide === 'woo' ? (
+                <motion.div 
+                  key="woo-guide"
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 10 }}
+                  className="bg-white rounded-3xl border border-slate-200 shadow-sm p-8 md:p-12 overflow-hidden relative"
+                >
+                  <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
+                    <RefreshCw size={200} />
+                  </div>
+
+                  <div className="flex items-center gap-4 mb-10">
+                    <div className="w-14 h-14 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center">
+                      <RefreshCw size={28} />
+                    </div>
+                    <div>
+                      <h4 className="text-2xl font-bold text-slate-800">WooCommerce Integration Guide</h4>
+                      <p className="text-sm text-slate-400">কিভাবে আপনার ওয়েবসাইট POS এর সাথে কানেক্ট করবেন</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                    <div className="space-y-8">
+                      <div className="flex gap-5">
+                        <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold shrink-0">1</div>
+                        <div>
+                          <p className="font-bold text-slate-800 mb-2">WordPress Settings এ যান</p>
+                          <p className="text-xs text-slate-500 leading-relaxed">আপনার সাইটের এডমিন প্যানেলে লগইন করে <span className="font-bold text-slate-700">WooCommerce → Settings → Advanced → REST API</span> এ ক্লিক করুন।</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-5">
+                        <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold shrink-0">2</div>
+                        <div>
+                          <p className="font-bold text-slate-800 mb-2">এপিআই কি (API Key) তৈরি করুন</p>
+                          <p className="text-xs text-slate-500 leading-relaxed font-medium">"Add Key" এ ক্লিক করুন। Description এ "Enterprise POS" দিন এবং Permissions এ অবশ্যই <span className="text-red-500 font-bold uppercase">Read/Write</span> সিলেক্ট করুন। এরপর Generate বাটনে চাপুন।</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-8">
+                      <div className="flex gap-5">
+                        <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold shrink-0">3</div>
+                        <div>
+                          <p className="font-bold text-slate-800 mb-2">POS এ তথ্য প্রদান করুন</p>
+                          <p className="text-xs text-slate-500 leading-relaxed">আমাদের POS ড্যাশবোর্ডের <span className="text-blue-600 font-bold">Sync Engine</span> মেনুতে যান। সেখানে আপনার ডোমেইন ইউআরএল এবং কপি করা Consumer Key ও Consumer Secret পেস্ট করুন।</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-5">
+                        <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold shrink-0">4</div>
+                        <div>
+                          <p className="font-bold text-slate-800 mb-2">কানেকশন টেস্ট করুন</p>
+                          <p className="text-xs text-slate-500 leading-relaxed">"Test & Save Connection" বাটনে ক্লিক করুন। সব ঠিক থাকলে আপনার সাইটের অর্ডারগুলো অটোমেটিক POS এ চলে আসবে।</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-12 p-6 bg-slate-50 rounded-2xl border border-slate-100 flex items-start gap-4">
+                    <Info className="text-blue-500 shrink-0 mt-0.5" size={20} />
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      <span className="font-bold text-slate-700">গুরুত্বপূর্ণ:</span> আপনি যদি "Read Only" পারমিশন দেন তবে অর্ডার বা ইনভেন্টরি সিঙ্ক ঠিকমত কাজ করবে না। সবসময় "Read/Write" পারমিশন নিশ্চিত করুন।
+                    </p>
+                  </div>
+                </motion.div>
+              ) : (
+                <motion.div 
+                  key="steadfast-guide"
+                  initial={{ opacity: 0, x: 10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -10 }}
+                  className="bg-white rounded-3xl border border-slate-200 shadow-sm p-8 md:p-12 overflow-hidden relative"
+                >
+                  <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
+                    <Truck size={200} />
+                  </div>
+
+                  <div className="flex items-center gap-4 mb-10">
+                    <div className="w-14 h-14 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center">
+                      <Truck size={28} />
+                    </div>
+                    <div>
+                      <h4 className="text-2xl font-bold text-slate-800">Steadfast Courier Setup</h4>
+                      <p className="text-sm text-slate-400">অটোমেটিক কুরিয়ার বুকিং এবং ট্র্যাকিং মেকানিজম</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                    <div className="space-y-8">
+                      <div className="flex gap-5">
+                        <div className="w-8 h-8 rounded-full bg-orange-600 text-white flex items-center justify-center text-xs font-bold shrink-0">1</div>
+                        <div>
+                          <p className="font-bold text-slate-800 mb-2">এপিআই কি সংগ্রহ</p>
+                          <p className="text-xs text-slate-500 leading-relaxed font-medium">স্টেডফাস্ট কুরিয়ার প্যানেলে লগইন করে <span className="font-bold text-slate-700">Settings → API Key</span> সেকশনে যান। আপনার এপিআই কি এবং সিক্রেট কি জেনারেট করে কপি করুন।</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-5">
+                        <div className="w-8 h-8 rounded-full bg-orange-600 text-white flex items-center justify-center text-xs font-bold shrink-0">2</div>
+                        <div>
+                          <p className="font-bold text-slate-800 mb-2">POS কনফিগারেশন</p>
+                          <p className="text-xs text-slate-500 leading-relaxed">সিস্টেমের <span className="font-bold text-orange-600">Settings → Steadfast Connect</span> এ গিয়ে কি-গুলো পেস্ট করে "Verify Connection" এ ক্লিক করুন।</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-8">
+                      <div className="flex gap-5">
+                        <div className="w-8 h-8 rounded-full bg-orange-600 text-white flex items-center justify-center text-xs font-bold shrink-0">3</div>
+                        <div>
+                          <p className="font-bold text-slate-800 mb-2">ওয়েবহুক (Webhook) সেটআপ</p>
+                          <p className="text-xs text-slate-500 leading-relaxed">সেটিংসে দেওয়া <span className="font-bold text-brand-blue">Webhook URL</span> টি কপি করুন। এরপর স্টেডফাস্ট প্যানেলে গিয়ে Webhook সেকশনে এটি পেস্ট করে দিন। এটি করলে আপনার ডেলিভারি স্ট্যাটাস অটো আপডেট হবে।</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-5">
+                        <div className="w-8 h-8 rounded-full bg-orange-600 text-white flex items-center justify-center text-xs font-bold shrink-0">4</div>
+                        <div>
+                          <p className="font-bold text-slate-800 mb-2">পার্সেল বুকিং</p>
+                          <p className="text-xs text-slate-500 leading-relaxed">অর্ডার লিস্টে গিয়ে যে কোন অর্ডার ওপেন করুন এবং <span className="font-bold text-orange-500 italic">"Send Courier"</span> বাটনে ক্লিক করলেই আপনার পার্সেল বুকিং হয়ে যাবে।</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-12 p-8 bg-orange-50 rounded-3xl border border-orange-100 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-4 opacity-10">
+                      <Zap size={64} className="text-orange-600" />
+                    </div>
+                    <h5 className="font-bold text-orange-800 mb-2">কেন Webhook জরুরি?</h5>
+                    <p className="text-xs text-orange-600 leading-relaxed max-w-xl font-medium">
+                      ওয়েবহুক কানেক্ট না করলে আপনার কুরিয়ার প্যানেলের ডেলিভারি স্ট্যাটাস POS এ অটো আপডেট হবে না। তাই নিশ্চিত করুন যে আপনি Webhook URL টি স্টেডফাস্ট প্যানেলে সঠিকভাবে সেভ করেছেন।
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Support Section */}
+            <div className="bg-slate-900 rounded-3xl p-8 text-white flex flex-col md:flex-row items-center justify-between gap-6">
+              <div>
+                <h5 className="text-lg font-bold mb-1">প্রয়োজনীয় সাহায্য চাই?</h5>
+                <p className="text-xs text-slate-400">আমাদের সাপোর্ট টিম সব সময় আপনার পাশে আছে।</p>
+              </div>
+              <button className="bg-white text-slate-900 px-8 py-3 rounded-xl font-bold text-sm hover:bg-slate-100 transition-all flex items-center gap-2">
+                <ExternalLink size={16} /> Contact Support
+              </button>
             </div>
           </div>
         )}
@@ -4216,38 +4449,108 @@ CREATE TABLE IF NOT EXISTS products (
         ) : null}
 
         {currentView === 'dashboard' && (
-          /* Bottom Section (Learning Center) as seen in image_2 */
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-8">
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-blue-50 rounded-xl">
-                <BookOpen className="text-blue-600" size={24} />
+          <div className="space-y-6 pb-8">
+            <div className="flex items-center gap-3 mt-8 mb-2 px-1">
+              <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center">
+                <BookOpen size={18} />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-800">Learning Center</h3>
-                <p className="text-xs text-slate-400">Tutorials and business guides</p>
+                <h3 className="text-sm font-bold text-slate-800">Learning Center & Integration Guides</h3>
+                <p className="text-[10px] text-slate-400">Step-by-step instructions to automate your business</p>
               </div>
             </div>
-            <button className="text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors uppercase tracking-widest">
-              Explore
-            </button>
-          </div>
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-slate-50 rounded-xl">
-                <Store className="text-slate-600" size={24} />
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Card 1: Website Integration */}
+              <div 
+                onClick={() => {
+                  setActiveGuide('woo');
+                  setCurrentView('guide');
+                }} 
+                className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.07] transition-opacity">
+                  <RefreshCw size={80} />
+                </div>
+                <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <RefreshCw size={24} />
+                </div>
+                <h4 className="text-sm font-bold text-slate-800 mb-1">Website Integration</h4>
+                <p className="text-[11px] text-slate-400 leading-relaxed">Connect WooCommerce store to sync orders automatically.</p>
+                <div className="mt-6 flex items-center text-[10px] font-bold text-blue-600 uppercase tracking-widest gap-2">
+                  View Setup <ExternalLink size={10} />
+                </div>
               </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-800">Online Store</h3>
-                <p className="text-xs text-slate-400">Manage your digital storefront</p>
+
+              {/* Card 2: Steadfast Courier */}
+              <div 
+                onClick={() => {
+                  setActiveGuide('steadfast');
+                  setCurrentView('guide');
+                }} 
+                className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:border-orange-300 hover:shadow-md transition-all cursor-pointer group relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.07] transition-opacity">
+                  <Truck size={80} />
+                </div>
+                <div className="w-12 h-12 bg-orange-50 text-orange-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <Truck size={24} />
+                </div>
+                <h4 className="text-sm font-bold text-slate-800 mb-1">Steadfast Courier</h4>
+                <p className="text-[11px] text-slate-400 leading-relaxed">Automate your delivery process with Steadfast API.</p>
+                <div className="mt-6 flex items-center text-[10px] font-bold text-orange-600 uppercase tracking-widest gap-2">
+                  Setup Guide <ExternalLink size={10} />
+                </div>
+              </div>
+
+              {/* Card 3: Online Store */}
+              <div 
+                onClick={() => setCurrentView('settings')} 
+                className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:border-purple-300 hover:shadow-md transition-all cursor-pointer group relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.07] transition-opacity">
+                  <Store size={80} />
+                </div>
+                <div className="w-12 h-12 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <Store size={24} />
+                </div>
+                <h4 className="text-sm font-bold text-slate-800 mb-1">Online Store</h4>
+                <p className="text-[11px] text-slate-400 leading-relaxed">Manage your storefront and business profile settings.</p>
+                <div className="mt-6 flex items-center text-[10px] font-bold text-purple-600 uppercase tracking-widest gap-2">
+                  Configure <ExternalLink size={10} />
+                </div>
               </div>
             </div>
-            <button className="text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors uppercase tracking-widest">
-              Manage
-            </button>
+
+            {isPlaceholder && (
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl p-6 text-white shadow-lg flex flex-col md:flex-row items-center justify-between gap-6 mt-8 mb-4 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                <div className="flex items-center gap-5">
+                  <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md">
+                    <RefreshCw className="animate-spin-slow text-white" size={28} />
+                  </div>
+                  <div className="space-y-1">
+                    <h2 className="text-xl font-bold">Connect Your WooCommerce Store</h2>
+                    <p className="text-sm text-blue-100 opacity-90 max-w-md">আপনার ওয়েবসাইটের এপিআই কি সেটআপ করা নেই। ডাটা সিঙ্ক করতে এখনই ওয়েবসাইটটি কানেক্ট করুন।</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <button 
+                    onClick={() => setCurrentView('guide')}
+                    className="px-5 py-2.5 bg-white/10 hover:bg-white/20 rounded-xl text-sm font-bold transition-all border border-white/20"
+                  >
+                    View Guide
+                  </button>
+                  <button 
+                    onClick={() => setCurrentView('settings')}
+                    className="px-6 py-2.5 bg-white text-blue-600 hover:bg-blue-50 rounded-xl text-sm font-bold shadow-sm transition-all flex items-center gap-2"
+                  >
+                    Connect Now <ArrowRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
     </main>
 
       {/* Global Toast Notifications */}
