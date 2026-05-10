@@ -139,15 +139,19 @@ const SidebarItem = ({
 );
 
 const StatsCard = ({ label, value, symbol = false, subtext, subtextColor }: { label: string, value: string | number, symbol?: boolean, subtext?: string, subtextColor?: string }) => (
-  <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+  <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
     <div>
       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{label}</span>
       <div className="w-full border-b border-dashed border-slate-100 my-2" />
       <div className="flex items-baseline gap-1">
-        {symbol && <span className="text-xl font-bold text-slate-800">৳</span>}
-        <h3 className="text-2xl font-bold text-slate-800 tracking-tight">{value}</h3>
+        {symbol && <span className="text-xl font-bold text-slate-400">৳</span>}
+        <h3 className="text-3xl font-bold text-slate-800 tracking-tight">{value}</h3>
       </div>
-      {subtext && <p className={cn("text-[10px] font-bold mt-1", subtextColor)}>{subtext}</p>}
+      {subtext && (
+        <div className="mt-3 pt-3 border-t border-slate-50">
+          <p className={cn("text-[10px] font-bold", subtextColor || "text-slate-400")}>{subtext}</p>
+        </div>
+      )}
     </div>
   </div>
 );
@@ -990,6 +994,27 @@ export default function App() {
   const [categories, setCategories] = useState<any[]>([]);
   const [purchases, setPurchases] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+
+  // Recalculate stats whenever orders change
+  useEffect(() => {
+    if (orders.length > 0) {
+      const totalSales = orders.reduce((acc, order) => acc + (parseFloat(order.amount?.toString() || '0')), 0);
+      const orderCount = orders.length;
+      const avgOrderValue = orderCount > 0 ? totalSales / orderCount : 0;
+
+      setWooStats({
+        totalSales,
+        orderCount,
+        avgOrderValue
+      });
+    } else {
+      setWooStats({
+        totalSales: 0,
+        orderCount: 0,
+        avgOrderValue: 0
+      });
+    }
+  }, [orders]);
 
   // Supabase Data Persistence Functions
   const syncOrderToSupabase = async (order: any) => {
