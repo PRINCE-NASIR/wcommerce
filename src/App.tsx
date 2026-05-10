@@ -1670,6 +1670,50 @@ export default function App() {
     setTimeout(() => setIsRefreshing(false), 500);
   };
 
+  const handleSendCourier = async (order: any) => {
+    if (!steadfastConfig.connected) {
+      addToast('Courier Not Connected', 'Please configure Steadfast in settings first.', 'error');
+      return;
+    }
+
+    addToast('Pending', 'Booking consignment with Steadfast...', 'info');
+
+    try {
+      if (!supabase) throw new Error('Database not connected');
+      
+      // We'll call the Edge Function
+      const { data, error } = await supabase.functions.invoke('steadfast-integration', {
+        body: { 
+          // Match the format expected by the function or update function to handle this
+          record: {
+            id: order.id.replace('#ORD-', '').replace('#ORD', ''),
+            user_id: session?.user?.id,
+            order_id: order.id,
+            customer_name: order.customer,
+            customer_phone: order.phone,
+            customer_address: order.address,
+            amount: order.amount,
+            total_amount: order.amount
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      addToast('Success', 'Consignment booked successfully!', 'success');
+      
+      // Update local order status
+      setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'Booked' } : o));
+      if (selectedOrder?.id === order.id) {
+        setSelectedOrder(prev => prev ? { ...prev, status: 'Booked' } : null);
+      }
+
+    } catch (err: any) {
+      console.error('Steadfast booking error:', err);
+      addToast('Booking Failed', err.message || 'Could not send order to courier.', 'error');
+    }
+  };
+
   const handleAddOrder = (e: React.FormEvent) => {
     e.preventDefault();
     const productPrice = parseFloat(newOrderData.productPrice) || 0;
@@ -2661,6 +2705,16 @@ export default function App() {
                     <Save size={16} /> Save
                   </motion.button>
                 )}
+                
+                {selectedOrder.status !== 'Booked' && (
+                  <button 
+                    onClick={() => handleSendCourier(selectedOrder)}
+                    className="flex-1 bg-orange-500 text-white font-bold py-3.5 rounded-xl hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20 active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <Truck size={16} /> Send Courier
+                  </button>
+                )}
+
                 <button 
                   onClick={handlePrint}
                   className="flex-1 bg-slate-800 text-white font-bold py-3.5 rounded-xl hover:bg-slate-900 transition-all shadow-lg shadow-slate-900/20 active:scale-95"

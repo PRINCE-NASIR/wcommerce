@@ -42,10 +42,17 @@ serve(async (req) => {
       console.error('Steadfast credentials missing for user:', order.user_id);
       
       // Log the failure in the order status
-      await supabaseAdmin
+      const missingCredsQuery = supabaseAdmin
         .from('orders')
-        .update({ status: 'Failed', updated_at: new Date().toISOString() })
-        .eq('id', order.id);
+        .update({ status: 'Failed', updated_at: new Date().toISOString() });
+
+      if (order.id && !isNaN(Number(order.id))) {
+        missingCredsQuery.eq('id', order.id);
+      } else {
+        missingCredsQuery.eq('order_id', order.order_id).eq('user_id', order.user_id);
+      }
+
+      await missingCredsQuery;
         
       throw new Error('Courier credentials not configured by user.');
     }
@@ -84,15 +91,21 @@ serve(async (req) => {
       // Success: update order in Supabase with booking details
       const { consignment_id, tracking_code } = result.order;
 
-      const { error: updateError } = await supabaseAdmin
-        .from('orders')
-        .update({
-          consignment_id: consignment_id,
-          tracking_code: tracking_code,
-          status: 'Booked',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', order.id);
+    // Update the order - use order_id + user_id if id is not a numeric primary key
+    const query = supabaseAdmin.from('orders').update({
+      consignment_id: consignment_id,
+      tracking_code: tracking_code,
+      status: 'Booked',
+      updated_at: new Date().toISOString()
+    });
+
+    if (order.id && !isNaN(Number(order.id))) {
+      query.eq('id', order.id);
+    } else {
+      query.eq('order_id', order.order_id).eq('user_id', order.user_id);
+    }
+
+    const { error: updateError } = await query;
 
       if (updateError) throw updateError;
 
@@ -108,13 +121,18 @@ serve(async (req) => {
       // Failure: Log error and update status to 'Failed'
       console.error('Steadfast booking failed:', result);
       
-      const { error: failUpdateError } = await supabaseAdmin
-        .from('orders')
-        .update({ 
-          status: 'Failed',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', order.id);
+      const failQuery = supabaseAdmin.from('orders').update({ 
+        status: 'Failed',
+        updated_at: new Date().toISOString()
+      });
+
+      if (order.id && !isNaN(Number(order.id))) {
+        failQuery.eq('id', order.id);
+      } else {
+        failQuery.eq('order_id', order.order_id).eq('user_id', order.user_id);
+      }
+
+      const { error: failUpdateError } = await failQuery;
 
       if (failUpdateError) console.error('Failed to update status to Failed:', failUpdateError);
 
