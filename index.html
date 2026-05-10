@@ -8,29 +8,43 @@
       // Robust global shim to prevent "Cannot set property fetch of #<Window>" errors
       // commonly caused by fetch polyfills in sandboxed environments (like iframes or WebViews).
       (function() {
+        // 1. Fix 'global'
         if (typeof global === 'undefined') {
+          window.global = window;
+        }
+
+        // 2. Fix 'fetch' attempt to overwrite
+        try {
+          var _fetch = window.fetch;
+          Object.defineProperty(window, 'fetch', {
+            configurable: true,
+            enumerable: true,
+            get: function() { return _fetch; },
+            set: function(v) { 
+              console.warn('Blocked attempt to overwrite fetch');
+              _fetch = v; 
+            }
+          });
+        } catch (e) {
+          console.warn('Could not redefine fetch property, falling back to proxy if needed');
+        }
+
+        // 3. Fallback proxy for other global properties
+        if (typeof window.global === 'undefined' || window.global === window) {
           try {
-            window.global = new Proxy(window, {
-              get(target, prop) {
-                if (prop === 'global') return window.global;
-                // Basic property access
-                const val = target[prop];
-                if (typeof val === 'function') return val.bind(target);
-                return val;
-              },
-              set(target, prop, value) {
+            var proxy = new Proxy(window, {
+              set: function(target, prop, value) {
                 try {
                   target[prop] = value;
                 } catch (e) {
                   console.warn('Caught attempt to overwrite read-only property:', prop);
                 }
-                return true; // Always return true to pretend success
+                return true;
               }
             });
-          } catch (e) {
-            // Fallback for very old browsers that don't support Proxy
-            window.global = window;
-          }
+            // We can't easily replace window, but we can make global a proxy
+            window.global = proxy;
+          } catch (e) {}
         }
       })();
     </script>

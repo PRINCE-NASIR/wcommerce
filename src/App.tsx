@@ -181,8 +181,10 @@ const AnimatedCopyButton = ({ text, onCopy }: { text: string, onCopy?: () => voi
     <motion.button
       whileTap={{ scale: 0.95 }}
       onClick={handleCopy}
-      className={`px-6 text-xs font-bold transition-all border-l border-slate-100 flex items-center justify-center gap-2 min-w-[80px] h-full ${
-        copied ? 'bg-green-50 text-green-600' : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
+      className={`px-8 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 min-w-[120px] shadow-sm ${
+        copied 
+          ? 'bg-green-500 text-white shadow-green-200' 
+          : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
       }`}
     >
       <AnimatePresence mode="wait">
@@ -3563,57 +3565,66 @@ CREATE TABLE IF NOT EXISTS products (
                   </p>
                 </div>
 
-                {/* Webhook Inputs */}
-                <div className="space-y-5">
+                  {/* Webhook Inputs */}
+                <div className="space-y-6">
                   {/* Secret Key */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-2 ml-1">Webhook Secret Key</label>
-                    <div className="flex bg-white border border-slate-200 rounded-xl overflow-hidden group focus-within:ring-2 focus-within:ring-blue-500 transition-all">
+                  <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                    <div className="px-5 py-3 border-b border-slate-50 bg-slate-50/50">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">Webhook Secret Key</label>
+                    </div>
+                    <div className="p-4 flex flex-col items-center gap-4">
                       <input 
                         type="text" 
                         readOnly 
                         value={webhookSecret}
-                        className="flex-1 px-5 py-4 text-sm font-medium text-slate-700 outline-none"
+                        className="w-full px-4 py-3 text-sm font-medium text-slate-700 bg-slate-50 rounded-xl text-center outline-none border border-transparent focus:border-blue-200 transition-all"
                       />
-                      <button 
-                        onClick={generateWebhookSecret}
-                        className="px-4 text-slate-400 hover:text-blue-500 transition-colors border-l border-slate-100"
-                      >
-                        <RefreshCw size={18} />
-                      </button>
-                      <AnimatedCopyButton 
-                        text={webhookSecret} 
-                        onCopy={() => {
-                          setNotifications([{id: Date.now(), title: 'Copied', message: 'Secret key copied', time: 'Just now', read: false}, ...notifications]);
-                        }} 
-                      />
-                    </div>
-                  </div>
-
-                  {/* URLs */}
-                  {[
-                    { label: 'Product Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=product.created` },
-                    { label: 'Product Updated Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=product.updated` },
-                    { label: 'Order Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=order.created` },
-                  ].map((item, idx) => (
-                    <div key={idx}>
-                      <label className="block text-xs font-bold text-slate-500 mb-2 ml-1">{item.label}</label>
-                      <div className="flex bg-white border border-slate-200 rounded-xl overflow-hidden group focus-within:ring-2 focus-within:ring-blue-500 transition-all">
-                        <input 
-                          type="text" 
-                          readOnly 
-                          value={item.value}
-                          className="flex-1 px-5 py-4 text-sm font-medium text-blue-600 outline-none truncate"
-                        />
+                      <div className="flex items-center gap-3 w-full sm:w-auto">
+                        <button 
+                          onClick={generateWebhookSecret}
+                          className="flex-1 sm:flex-none px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
+                        >
+                          <RefreshCw size={14} />
+                          <span>Regenerate</span>
+                        </button>
                         <AnimatedCopyButton 
-                          text={item.value} 
+                          text={webhookSecret} 
                           onCopy={() => {
-                            setNotifications([{id: Date.now(), title: 'Copied', message: 'Webhook URL copied', time: 'Just now', read: false}, ...notifications]);
+                            setNotifications([{id: Date.now(), title: 'Copied', message: 'Secret key copied', time: 'Just now', read: false}, ...notifications]);
                           }} 
                         />
                       </div>
                     </div>
-                  ))}
+                  </div>
+
+                  {/* URLs */}
+                  <div className="grid grid-cols-1 gap-6">
+                    {[
+                      { label: 'Product Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=product.created` },
+                      { label: 'Product Updated Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=product.updated` },
+                      { label: 'Order Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-webhook?user_id=${session?.user?.id}&topic=order.created` },
+                    ].map((item, idx) => (
+                      <div key={idx} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                        <div className="px-5 py-3 border-b border-slate-50 bg-slate-50/50">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.label}</label>
+                        </div>
+                        <div className="p-4 flex flex-col items-center gap-4">
+                          <input 
+                            type="text" 
+                            readOnly 
+                            value={item.value}
+                            className="w-full px-4 py-3 text-sm font-medium text-blue-600 bg-blue-50/30 rounded-xl text-center outline-none border border-transparent focus:border-blue-200 transition-all"
+                          />
+                          <AnimatedCopyButton 
+                            text={item.value} 
+                            onCopy={() => {
+                              setNotifications([{id: Date.now(), title: 'Copied', message: 'Webhook URL copied', time: 'Just now', read: false}, ...notifications]);
+                            }} 
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
