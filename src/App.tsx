@@ -1139,63 +1139,87 @@ export default function App() {
     };
   }, [session, supabase]);
 
-  const handleOrderSync = async () => {
+  const syncOrders = async () => {
     if (!supabase || !session?.user) {
-      setNotifications(prev => [{
-        id: generateId(),
-        title: 'Authentication Required',
-        message: 'Please log in to sync your store.',
-        time: 'Just now',
-        read: false,
-        type: 'error'
-      }, ...prev]);
+      addToast('Auth Required', 'Please log in to sync your store.', 'error');
       return;
     }
 
     setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: true } }));
-    setNotifications(prev => [{
-      id: generateId(),
-      title: 'Global Sync Started',
-      message: 'Triggering WooCommerce Sync Engine...',
-      time: 'Just now',
-      read: false
-    }, ...prev]);
-
+    
     try {
-      const { data, error } = await supabase.functions.invoke('woo-sync', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        }
+      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
+        body: { action: 'sync_orders' }
       });
 
       if (error) throw error;
 
       if (data?.success) {
         setSyncStatus(prev => ({ ...prev, orders: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
-        setNotifications(prev => [{
-          id: generateId(),
-          title: 'Sync Complete',
-          message: `Successfully synchronized ${data.count} orders from WooCommerce.`,
-          time: 'Just now',
-          read: false,
-          type: 'success'
-        }, ...prev]);
+        addToast('Orders Synced', `Successfully synced ${data.count} orders.`, 'success');
         
-        // Refresh local data
-        getWooStats();
+        // Refresh local stats if possible
+        if (typeof getWooStats === 'function') getWooStats();
       } else {
         throw new Error(data?.error || 'Unknown sync error');
       }
     } catch (err: any) {
       setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: false } }));
-      setNotifications(prev => [{
-        id: generateId(),
-        title: 'Sync Failed',
-        message: err.message || 'Check your API settings and try again.',
-        time: 'Just now',
-        read: false,
-        type: 'error'
-      }, ...prev]);
+      addToast('Sync Failed', err.message || 'Check your API settings.', 'error');
+    }
+  };
+
+  const syncProducts = async () => {
+    if (!supabase || !session?.user) {
+      addToast('Auth Required', 'Please log in to sync your store.', 'error');
+      return;
+    }
+
+    setSyncStatus(prev => ({ ...prev, products: { ...prev.products, loading: true } }));
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
+        body: { action: 'sync_products' }
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        setSyncStatus(prev => ({ ...prev, products: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
+        addToast('Products Synced', `Successfully synced ${data.count} products.`, 'success');
+      } else {
+        throw new Error(data?.error || 'Unknown sync error');
+      }
+    } catch (err: any) {
+      setSyncStatus(prev => ({ ...prev, products: { ...prev.products, loading: false } }));
+      addToast('Sync Failed', err.message || 'Check your API settings.', 'error');
+    }
+  };
+
+  const syncCategories = async () => {
+    if (!supabase || !session?.user) {
+      addToast('Auth Required', 'Please log in to sync your store.', 'error');
+      return;
+    }
+
+    setSyncStatus(prev => ({ ...prev, categories: { ...prev.categories, loading: true } }));
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
+        body: { action: 'sync_categories' }
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        setSyncStatus(prev => ({ ...prev, categories: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
+        addToast('Categories Synced', `Successfully synced ${data.count} categories.`, 'success');
+      } else {
+        throw new Error(data?.error || 'Unknown sync error');
+      }
+    } catch (err: any) {
+      setSyncStatus(prev => ({ ...prev, categories: { ...prev.categories, loading: false } }));
+      addToast('Sync Failed', err.message || 'Check your API settings.', 'error');
     }
   };
 
@@ -3854,7 +3878,7 @@ export default function App() {
                   label: 'Orders', 
                   icon: ShoppingCart, 
                   color: 'bg-indigo-600', 
-                  handler: handleOrderSync, 
+                  handler: syncOrders, 
                   status: syncStatus.orders 
                 },
                 { 
@@ -3862,7 +3886,7 @@ export default function App() {
                   label: 'Products', 
                   icon: Package, 
                   color: 'bg-indigo-600', 
-                  handler: getWooProducts, 
+                  handler: syncProducts, 
                   status: syncStatus.products 
                 },
                 { 
@@ -3870,7 +3894,7 @@ export default function App() {
                   label: 'Categories', 
                   icon: Layers, 
                   color: 'bg-indigo-600', 
-                  handler: getWooCategories, 
+                  handler: syncCategories, 
                   status: syncStatus.categories 
                 },
               ].map((card) => (
