@@ -8,7 +8,7 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  console.log(`${req.method} request to unified-sync-engine`)
+  // CORS Preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -18,189 +18,128 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    // 1. Get the user from the Authorization header
+    // Authenticate
     const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      console.error('Missing Authorization header')
-      throw new Error('No authorization header')
-    }
+    if (!authHeader) throw new Error('No authorization header')
     
-    const token = authHeader.replace('Bearer ', '')
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-    if (authError || !user) {
-      console.error('Auth error:', authError)
-      throw new Error('Invalid token')
-    }
+    const { data: { user }, error: authError } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''))
+    if (authError || !user) throw new Error('Invalid authentication token')
 
     const userId = user.id
-    console.log(`User authenticated: ${userId}`)
 
-    // 2. Parse request body
-    let body
-    try {
-      body = await req.json()
-    } catch (e) {
-      console.error('Failed to parse body:', e)
-      throw new Error('Invalid JSON body')
-    }
-    
+    // Parse Body
+    const body = await req.json().catch(() => ({}))
     const { action } = body
     if (!action) throw new Error('Missing action parameter')
 
-    console.log(`Action: ${action}`)
+    console.log(`Action: ${action} for User: ${userId}`)
 
-    // 3. Fetch WooCommerce credentials
+    // Fetch Credentials
     const { data: settings, error: settingsError } = await supabase
       .from('settings')
-      .select('woo_url, woo_key, woo_secret')
+      .select('woo_url, woo_key, woo_secret, website_url, consumer_key, consumer_secret')
       .eq('user_id', userId)
       .single()
 
-    if (settingsError || !settings?.woo_url) {
-      console.error('Settings error:', settingsError)
-      throw new Error('WooCommerce settings not found. Please configure URL, Key, and Secret in settings.')
+    if (settingsError || !settings) {
+      throw new Error('WooCommerce settings not found. Please configure URL, Key and Secret.')
     }
 
-    const { woo_url, woo_key, woo_secret } = settings
-    if (!woo_url || !woo_key || !woo_secret) {
-      throw new Error('Incomplete WooCommerce settings. Please provide URL, Key, and Secret.')
+    const { woo_url, woo_key, woo_secret, website_url, consumer_key, consumer_secret } = settings
+    const actualUrl = (woo_url || website_url || '').trim().replace(/\/$/, '')
+    const actualKey = (woo_key || consumer_key || '').trim()
+    const actualSecret = (woo_secret || consumer_secret || '').trim()
+
+    if (!actualUrl || !actualKey) {
+      throw new Error('Incomplete WooCommerce settings.')
     }
 
-    let baseUrl = woo_url.trim().replace(/\/$/, '')
-    if (!baseUrl.startsWith('http')) {
-      baseUrl = `https://${baseUrl}`
-    }
-    
-    console.log(`Using base URL: ${baseUrl}`)
-    const auth = btoa(`${woo_key}:${woo_secret}`)
+    const auth = btoa(`${actualKey}:${actualSecret}`)
+    const headers = { 'Authorization': `Basic ${auth}` }
 
     let count = 0
     let message = ''
 
-    switch (action) {
-      case 'sync_orders': {
-        console.log(`Fetching orders for user: ${userId}`)
-        const response = await fetch(`${baseUrl}/wp-json/wc/v3/orders?per_page=50&status=any`, {
-          headers: { 'Authorization': `Basic ${auth}` }
-        })
-        if (!response.ok) {
-          const errorText = await response.text()
-          throw new Error(`WooCommerce API Error (Orders): ${response.status} - ${errorText}`)
-        }
-        const orders = await response.json()
-        
-        if (orders.length > 0) {
-          const toUpsert = orders.map((o: any) => ({
-            user_id: userId,
-            order_id: o.id.toString(),
-            customer_name: `${o.billing?.first_name || 'Guest'} ${o.billing?.last_name || ''}`.trim(),
-            customer_phone: o.billing?.phone || '',
-            customer_address: `${o.billing?.address_1 || ''}, ${o.billing?.city || ''}`.trim(),
-            product_name: o.line_items?.[0]?.name || 'General',
-            product_category: 'WooCommerce', 
-            product_price: parseFloat(o.line_items?.[0]?.price) || 0,
-            delivery_charge: parseFloat(o.shipping_total) || 0,
-            amount: parseFloat(o.total) || 0,
-            cod_amount: o.payment_method === 'cod' ? parseFloat(o.total) : 0,
-            status: o.status.charAt(0).toUpperCase() + o.status.slice(1),
-            order_date: o.date_created?.split('T')[0] || new Date().toISOString().split('T')[0],
-            order_time: o.date_created?.split('T')[1] || new Date().toLocaleTimeString(),
-            updated_at: new Date().toISOString()
-          }))
-          const { error } = await supabase.from('orders').upsert(toUpsert, { onConflict: 'user_id, order_id' })
-          if (error) {
-            console.error('Supabase Upsert Error (Orders):', error)
-            throw error
-          }
-          count = orders.length
-          message = 'Orders synchronized successfully'
-        } else {
-          message = 'No orders found to synchronize'
-        }
-        break
+    if (action === 'sync_orders') {
+      const resp = await fetch(`${actualUrl}/wp-json/wc/v3/orders?per_page=50&status=any`, { headers })
+      if (!resp.ok) throw new Error(`WooCommerce API Error (Orders): ${resp.status}`)
+      const orders = await resp.json()
+      if (Array.isArray(orders) && orders.length > 0) {
+        const toUpsert = orders.map((o: any) => ({
+          user_id: userId,
+          order_id: o.id.toString(),
+          customer_name: `${o.billing?.first_name || 'Guest'} ${o.billing?.last_name || ''}`.trim(),
+          customer_phone: o.billing?.phone || '',
+          customer_address: `${o.billing?.address_1 || ''}, ${o.billing?.city || ''}`.trim(),
+          product_name: o.line_items?.[0]?.name || 'General',
+          amount: parseFloat(o.total) || 0,
+          status: o.status.charAt(0).toUpperCase() + o.status.slice(1),
+          product_category: 'WooCommerce',
+          updated_at: new Date().toISOString()
+        }))
+        const { error } = await supabase.from('orders').upsert(toUpsert, { onConflict: 'user_id, order_id' })
+        if (error) throw error
+        count = orders.length
+        message = `Successfully synced ${count} orders.`
+      } else {
+        message = 'No new orders found.'
       }
-
-      case 'sync_products': {
-        console.log(`Fetching products for user: ${userId}`)
-        const response = await fetch(`${baseUrl}/wp-json/wc/v3/products?per_page=100`, {
-          headers: { 'Authorization': `Basic ${auth}` }
-        })
-        if (!response.ok) {
-          const errorText = await response.text()
-          throw new Error(`WooCommerce API Error (Products): ${response.status} - ${errorText}`)
-        }
-        const products = await response.json()
-
-        if (products.length > 0) {
-          const toUpsert = products.map((p: any) => ({
-            user_id: userId,
-            product_id: p.id.toString(),
-            name: p.name,
-            price: p.price,
-            stock: p.stock_quantity || 0,
-            category: p.categories?.[0]?.name || 'Uncategorized',
-            status: p.status,
-            updated_at: new Date().toISOString()
-          }))
-          const { error } = await supabase.from('products').upsert(toUpsert, { onConflict: 'user_id, product_id' })
-          if (error) {
-            console.error('Supabase Upsert Error (Products):', error)
-            throw error
-          }
-          count = products.length
-          message = 'Products synchronized successfully'
-        } else {
-          message = 'No products found to synchronize'
-        }
-        break
+    } else if (action === 'sync_products') {
+      const resp = await fetch(`${actualUrl}/wp-json/wc/v3/products?per_page=100`, { headers })
+      if (!resp.ok) throw new Error(`WooCommerce API Error (Products): ${resp.status}`)
+      const products = await resp.json()
+      if (Array.isArray(products) && products.length > 0) {
+        const toUpsert = products.map((p: any) => ({
+          user_id: userId,
+          product_id: p.id.toString(),
+          name: p.name,
+          price: p.price,
+          stock: p.stock_quantity || 0,
+          category: p.categories?.[0]?.name || 'Uncategorized',
+          status: p.status,
+          updated_at: new Date().toISOString()
+        }))
+        const { error } = await supabase.from('products').upsert(toUpsert, { onConflict: 'user_id, product_id' })
+        if (error) throw error
+        count = products.length
+        message = `Successfully synced ${count} products.`
+      } else {
+        message = 'No new products found.'
       }
-
-      case 'sync_categories': {
-        console.log(`Fetching categories for user: ${userId}`)
-        const response = await fetch(`${baseUrl}/wp-json/wc/v3/products/categories?per_page=100`, {
-          headers: { 'Authorization': `Basic ${auth}` }
-        })
-        if (!response.ok) {
-          const errorText = await response.text()
-          throw new Error(`WooCommerce API Error (Categories): ${response.status} - ${errorText}`)
-        }
-        const categories = await response.json()
-
-        if (categories.length > 0) {
-          const toUpsert = categories.map((c: any) => ({
-            user_id: userId,
-            category_id: c.id.toString(),
-            name: c.name,
-            description: c.description || '',
-            count: c.count || 0,
-            updated_at: new Date().toISOString()
-          }))
-          const { error } = await supabase.from('categories').upsert(toUpsert, { onConflict: 'user_id, category_id' })
-          if (error) {
-            console.error('Supabase Upsert Error (Categories):', error)
-            throw error
-          }
-          count = categories.length
-          message = 'Categories synchronized successfully'
-        } else {
-          message = 'No categories found to synchronize'
-        }
-        break
+    } else if (action === 'sync_categories') {
+      const resp = await fetch(`${actualUrl}/wp-json/wc/v3/products/categories?per_page=100`, { headers })
+      if (!resp.ok) throw new Error(`WooCommerce API Error (Categories): ${resp.status}`)
+      const categories = await resp.json()
+      if (Array.isArray(categories) && categories.length > 0) {
+        const toUpsert = categories.map((c: any) => ({
+          user_id: userId,
+          category_id: c.id.toString(),
+          name: c.name,
+          description: c.description || '',
+          count: c.count || 0,
+          updated_at: new Date().toISOString()
+        }))
+        const { error } = await supabase.from('categories').upsert(toUpsert, { onConflict: 'user_id, category_id' })
+        if (error) throw error
+        count = categories.length
+        message = `Successfully synced ${count} categories.`
+      } else {
+        message = 'No new categories found.'
       }
-
-      default:
-        throw new Error(`Invalid action: ${action}`)
+    } else {
+      throw new Error(`Invalid action: ${action}`)
     }
 
-    return new Response(
-      JSON.stringify({ success: true, count, message }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-    )
+    return new Response(JSON.stringify({ success: true, count, message }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 200,
+    })
 
   } catch (err) {
-    return new Response(
-      JSON.stringify({ error: err.message }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-    )
+    console.error('Edge Function Error:', err.message)
+    return new Response(JSON.stringify({ error: err.message }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 400,
+    })
   }
 })

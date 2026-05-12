@@ -1148,14 +1148,14 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: true } }));
     
     try {
-      console.log('Invoking woo-sync for orders...');
-      const { data, error } = await supabase.functions.invoke('woo-sync', {
+      console.log('Invoking unified-sync-engine for orders...');
+      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
         body: { action: 'sync_orders' }
       });
 
       if (error) {
-        console.error('Edge Function Error:', error);
-        throw error;
+        console.error('Edge Function Request Failure (Orders):', error);
+        throw new Error(`Connection Error: ${error.message || 'Check network'}`);
       }
 
       if (data?.success) {
@@ -1164,7 +1164,7 @@ export default function App() {
         
         if (typeof getWooStats === 'function') getWooStats();
       } else {
-        throw new Error(data?.error || 'Unknown sync error');
+        throw new Error(data?.error || 'Sync service reported an error');
       }
     } catch (err: any) {
       console.error('Sync Orders full error:', err);
@@ -1182,21 +1182,21 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, products: { ...prev.products, loading: true } }));
     
     try {
-      console.log('Invoking woo-sync for products...');
-      const { data, error } = await supabase.functions.invoke('woo-sync', {
+      console.log('Invoking unified-sync-engine for products...');
+      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
         body: { action: 'sync_products' }
       });
 
       if (error) {
-        console.error('Edge Function Error:', error);
-        throw error;
+        console.error('Edge Function Request Failure (Products):', error);
+        throw new Error(`Connection Error: ${error.message || 'Check network'}`);
       }
 
       if (data?.success) {
         setSyncStatus(prev => ({ ...prev, products: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
         addToast('Products Synced', `Successfully synced ${data.count} products.`, 'success');
       } else {
-        throw new Error(data?.error || 'Unknown sync error');
+        throw new Error(data?.error || 'Sync service reported an error');
       }
     } catch (err: any) {
       console.error('Sync Products full error:', err);
@@ -1214,21 +1214,21 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, categories: { ...prev.categories, loading: true } }));
     
     try {
-      console.log('Invoking woo-sync for categories...');
-      const { data, error } = await supabase.functions.invoke('woo-sync', {
+      console.log('Invoking unified-sync-engine for categories...');
+      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
         body: { action: 'sync_categories' }
       });
 
       if (error) {
-        console.error('Edge Function Error:', error);
-        throw error;
+        console.error('Edge Function Request Failure (Categories):', error);
+        throw new Error(`Connection Error: ${error.message || 'Check network'}`);
       }
 
       if (data?.success) {
         setSyncStatus(prev => ({ ...prev, categories: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
         addToast('Categories Synced', `Successfully synced ${data.count} categories.`, 'success');
       } else {
-        throw new Error(data?.error || 'Unknown sync error');
+        throw new Error(data?.error || 'Sync service reported an error');
       }
     } catch (err: any) {
       console.error('Sync Categories full error:', err);
