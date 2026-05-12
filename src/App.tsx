@@ -1148,8 +1148,8 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: true } }));
     
     try {
-      console.log('Invoking unified-sync-engine for orders...');
-      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
+      console.log('Invoking woo-sync for orders...');
+      const { data, error } = await supabase.functions.invoke('woo-sync', {
         body: { action: 'sync_orders' }
       });
 
@@ -1167,7 +1167,7 @@ export default function App() {
         throw new Error(data?.error || 'Unknown sync error');
       }
     } catch (err: any) {
-      console.error('Sync Orders catch:', err);
+      console.error('Sync Orders full error:', err);
       setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: false } }));
       addToast('Sync Failed', err.message || 'Check your API settings.', 'error');
     }
@@ -1182,8 +1182,8 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, products: { ...prev.products, loading: true } }));
     
     try {
-      console.log('Invoking unified-sync-engine for products...');
-      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
+      console.log('Invoking woo-sync for products...');
+      const { data, error } = await supabase.functions.invoke('woo-sync', {
         body: { action: 'sync_products' }
       });
 
@@ -1199,7 +1199,7 @@ export default function App() {
         throw new Error(data?.error || 'Unknown sync error');
       }
     } catch (err: any) {
-      console.error('Sync Products catch:', err);
+      console.error('Sync Products full error:', err);
       setSyncStatus(prev => ({ ...prev, products: { ...prev.products, loading: false } }));
       addToast('Sync Failed', err.message || 'Check your API settings.', 'error');
     }
@@ -1214,8 +1214,8 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, categories: { ...prev.categories, loading: true } }));
     
     try {
-      console.log('Invoking unified-sync-engine for categories...');
-      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
+      console.log('Invoking woo-sync for categories...');
+      const { data, error } = await supabase.functions.invoke('woo-sync', {
         body: { action: 'sync_categories' }
       });
 
@@ -1231,7 +1231,7 @@ export default function App() {
         throw new Error(data?.error || 'Unknown sync error');
       }
     } catch (err: any) {
-      console.error('Sync Categories catch:', err);
+      console.error('Sync Categories full error:', err);
       setSyncStatus(prev => ({ ...prev, categories: { ...prev.categories, loading: false } }));
       addToast('Sync Failed', err.message || 'Check your API settings.', 'error');
     }
