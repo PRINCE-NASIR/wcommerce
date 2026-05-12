@@ -1148,22 +1148,26 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: true } }));
     
     try {
+      console.log('Invoking unified-sync-engine for orders...');
       const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
         body: { action: 'sync_orders' }
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Edge Function Error:', error);
+        throw error;
+      }
 
       if (data?.success) {
         setSyncStatus(prev => ({ ...prev, orders: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
         addToast('Orders Synced', `Successfully synced ${data.count} orders.`, 'success');
         
-        // Refresh local stats if possible
         if (typeof getWooStats === 'function') getWooStats();
       } else {
         throw new Error(data?.error || 'Unknown sync error');
       }
     } catch (err: any) {
+      console.error('Sync Orders catch:', err);
       setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: false } }));
       addToast('Sync Failed', err.message || 'Check your API settings.', 'error');
     }
@@ -1178,11 +1182,15 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, products: { ...prev.products, loading: true } }));
     
     try {
+      console.log('Invoking unified-sync-engine for products...');
       const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
         body: { action: 'sync_products' }
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Edge Function Error:', error);
+        throw error;
+      }
 
       if (data?.success) {
         setSyncStatus(prev => ({ ...prev, products: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
@@ -1191,6 +1199,7 @@ export default function App() {
         throw new Error(data?.error || 'Unknown sync error');
       }
     } catch (err: any) {
+      console.error('Sync Products catch:', err);
       setSyncStatus(prev => ({ ...prev, products: { ...prev.products, loading: false } }));
       addToast('Sync Failed', err.message || 'Check your API settings.', 'error');
     }
@@ -1205,11 +1214,15 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, categories: { ...prev.categories, loading: true } }));
     
     try {
+      console.log('Invoking unified-sync-engine for categories...');
       const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
         body: { action: 'sync_categories' }
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Edge Function Error:', error);
+        throw error;
+      }
 
       if (data?.success) {
         setSyncStatus(prev => ({ ...prev, categories: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
@@ -1218,6 +1231,7 @@ export default function App() {
         throw new Error(data?.error || 'Unknown sync error');
       }
     } catch (err: any) {
+      console.error('Sync Categories catch:', err);
       setSyncStatus(prev => ({ ...prev, categories: { ...prev.categories, loading: false } }));
       addToast('Sync Failed', err.message || 'Check your API settings.', 'error');
     }
