@@ -692,6 +692,10 @@ export default function App() {
               loadedWebhookSecret = generateDeterministicSecret(session.user.id);
             }
 
+            if (settingsData.woo_url && settingsData.woo_key && settingsData.woo_secret) {
+              setIsBackendConfigured(true);
+            }
+
             setWooConfig({
               url: settingsData.woo_url || '',
               key: settingsData.woo_key || settingsData.key || '',
@@ -836,6 +840,7 @@ export default function App() {
       ]);
 
       if (wooConfig.url && wooConfig.key && wooConfig.secret) {
+        setIsBackendConfigured(true);
         getWooStats();
         getWooProducts();
       }
@@ -1148,14 +1153,16 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, orders: { ...prev.orders, loading: true } }));
     
     try {
-      console.log('Invoking unified-sync-engine for orders...');
-      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
+      console.log('Invoking sync-orders function for orders...');
+      const { data, error } = await supabase.functions.invoke('sync-orders', {
         body: { action: 'sync_orders' }
       });
 
       if (error) {
         console.error('Edge Function Request Failure (Orders):', error);
-        throw new Error(`Connection Error: ${error.message || 'Check network'}`);
+        // Extract real error message if possible
+        const errorMessage = typeof error === 'string' ? error : (error.message || 'Check network');
+        throw new Error(`Sync Error: ${errorMessage}`);
       }
 
       if (data?.success) {
@@ -1182,14 +1189,15 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, products: { ...prev.products, loading: true } }));
     
     try {
-      console.log('Invoking unified-sync-engine for products...');
-      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
+      console.log('Invoking sync-orders function for products...');
+      const { data, error } = await supabase.functions.invoke('sync-orders', {
         body: { action: 'sync_products' }
       });
 
       if (error) {
         console.error('Edge Function Request Failure (Products):', error);
-        throw new Error(`Connection Error: ${error.message || 'Check network'}`);
+        const errorMessage = typeof error === 'string' ? error : (error.message || 'Check network');
+        throw new Error(`Sync Error: ${errorMessage}`);
       }
 
       if (data?.success) {
@@ -1214,14 +1222,15 @@ export default function App() {
     setSyncStatus(prev => ({ ...prev, categories: { ...prev.categories, loading: true } }));
     
     try {
-      console.log('Invoking unified-sync-engine for categories...');
-      const { data, error } = await supabase.functions.invoke('unified-sync-engine', {
+      console.log('Invoking sync-orders function for categories...');
+      const { data, error } = await supabase.functions.invoke('sync-orders', {
         body: { action: 'sync_categories' }
       });
 
       if (error) {
         console.error('Edge Function Request Failure (Categories):', error);
-        throw new Error(`Connection Error: ${error.message || 'Check network'}`);
+        const errorMessage = typeof error === 'string' ? error : (error.message || 'Check network');
+        throw new Error(`Sync Error: ${errorMessage}`);
       }
 
       if (data?.success) {
@@ -4304,9 +4313,9 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_address TEXT;
                     </p>
 
                     {[
-                      { label: 'Product Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-w?user_id=${session?.user?.id}&topic=product.created` },
-                      { label: 'Product Updated Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-w?user_id=${session?.user?.id}&topic=product.updated` },
-                      { label: 'Order Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/woo-w?user_id=${session?.user?.id}&topic=order.created` },
+                      { label: 'Product Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sync-orders?user_id=${session?.user?.id}&topic=product.created` },
+                      { label: 'Product Updated Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sync-orders?user_id=${session?.user?.id}&topic=product.updated` },
+                      { label: 'Order Created Webhook URL', value: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sync-orders?user_id=${session?.user?.id}&topic=order.created` },
                     ].map((item, idx) => (
                       <div key={idx} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                         <div className="px-5 py-3 border-b border-slate-50 bg-slate-50/50">

@@ -21,9 +21,5 @@ const supabaseUrl = normalizeUrl(supabaseUrlInput);
 
 // Create client only if keys are present and valid
 export const supabase = (supabaseUrl && supabaseAnonKey && supabaseUrl.includes('.')) 
-  ? createClient(supabaseUrl, supabaseAnonKey, {
-      global: {
-        fetch: (input, init) => fetch(input, init)
-      }
-    })
+  ? createClient(supabaseUrl, supabaseAnonKey)
   : null;
