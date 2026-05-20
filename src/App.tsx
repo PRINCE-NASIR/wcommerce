@@ -286,6 +286,7 @@ export default function App() {
         setCustomers([]);
         setNotifications([]);
         setIsBackendConfigured(false);
+        setIsSettingsLoaded(false);
         localStorage.clear(); // Important: Clear all cached data
       }
     });
@@ -344,30 +345,60 @@ export default function App() {
 
   const [isConfigSaving, setIsConfigSaving] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
+  const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
 
-  // Auto-save settings to Supabase
-  useEffect(() => {
-    if (!session?.user || !supabase) return;
-    
-    const timer = setTimeout(async () => {
-      if (wooConfig.url || wooConfig.key || wooConfig.secret || wooConfig.webhookSecret || steadfastConfig.apiKey || steadfastConfig.secretKey) {
-        await supabase
+  // Safe helper to update or insert settings without wiping out other columns
+  const saveOrUpdateSettings = useCallback(async (partialData: any) => {
+    if (!supabase || !session?.user) return { error: new Error('Not connected or authenticated') };
+    try {
+      // 1. Try to UPDATE first
+      const { data, error } = await supabase
+        .from('settings')
+        .update({
+          ...partialData,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', session.user.id)
+        .select();
+
+      // 2. If no data updated (because row doesn't exist), insert/upsert the row
+      if (error || !data || data.length === 0) {
+        const { error: insertError } = await supabase
           .from('settings')
           .upsert({
             user_id: session.user.id,
-            woo_url: wooConfig.url,
-            woo_key: wooConfig.key,
-            woo_secret: wooConfig.secret,
-            webhook_secret: wooConfig.webhookSecret,
-            steadfast_api_key: steadfastConfig.apiKey,
-            steadfast_secret_key: steadfastConfig.secretKey,
+            ...partialData,
             updated_at: new Date().toISOString()
           }, { onConflict: 'user_id' });
+        
+        if (insertError) return { error: insertError };
+      }
+      return { success: true };
+    } catch (e: any) {
+      console.error('Error in saveOrUpdateSettings:', e);
+      return { error: e };
+    }
+  }, [supabase, session]);
+
+  // Auto-save settings to Supabase (only after initial settings load is complete)
+  useEffect(() => {
+    if (!session?.user || !supabase || !isSettingsLoaded) return;
+    
+    const timer = setTimeout(async () => {
+      if (wooConfig.url || wooConfig.key || wooConfig.secret || wooConfig.webhookSecret || steadfastConfig.apiKey || steadfastConfig.secretKey) {
+        await saveOrUpdateSettings({
+          woo_url: wooConfig.url,
+          woo_key: wooConfig.key,
+          woo_secret: wooConfig.secret,
+          webhook_secret: wooConfig.webhookSecret,
+          steadfast_api_key: steadfastConfig.apiKey,
+          steadfast_secret_key: steadfastConfig.secretKey
+        });
       }
     }, 1500);
 
     return () => clearTimeout(timer);
-  }, [wooConfig, steadfastConfig, session, supabase]);
+  }, [wooConfig, steadfastConfig, session, supabase, isSettingsLoaded, saveOrUpdateSettings]);
 
   // WooCommerce Status Mapper
   const mapWooStatus = (status: string) => {
@@ -498,16 +529,12 @@ export default function App() {
 
         // Auto-Sync Stats to Supabase
         if (supabase && session?.user) {
-          supabase.from('settings')
-            .upsert({
-              user_id: session.user.id,
-              total_sales: response.data.totalSales,
-              order_count: response.data.orderCount,
-              updated_at: new Date().toISOString()
-            }, { onConflict: 'user_id' })
-            .then(({ error }) => {
-              if (error) console.error('Auto-sync stats failed:', error);
-            });
+          saveOrUpdateSettings({
+            total_sales: response.data.totalSales,
+            order_count: response.data.orderCount
+          }).then((res) => {
+            if (res?.error) console.error('Auto-sync stats failed:', res.error);
+          });
         }
         
         let orderAdded = 0;
@@ -776,6 +803,7 @@ export default function App() {
               totalSpent: c.total_spent
             })));
           }
+          setIsSettingsLoaded(true);
         } catch (err) {
           console.error('Error initializing data from Supabase:', err);
         }
@@ -790,6 +818,7 @@ export default function App() {
       setProducts([]);
       setCustomers([]);
       setWooStats({ totalSales: 0, orderCount: 0, avgOrderValue: 0 });
+      setIsSettingsLoaded(false);
     }
   }, [session, supabase]);
 
@@ -808,16 +837,12 @@ export default function App() {
       if (!supabase) throw new Error('Database not connected');
       if (!session?.user) throw new Error('Not authenticated');
 
-      const { error: dbError } = await supabase
-        .from('settings')
-        .upsert({
-          user_id: session.user.id,
-          woo_url: wooConfig.url,
-          woo_key: wooConfig.key,
-          woo_secret: wooConfig.secret,
-          webhook_secret: wooConfig.webhookSecret,
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'user_id' });
+      const { error: dbError } = await saveOrUpdateSettings({
+        woo_url: wooConfig.url,
+        woo_key: wooConfig.key,
+        woo_secret: wooConfig.secret,
+        webhook_secret: wooConfig.webhookSecret
+      });
 
       if (dbError) {
         console.error('Supabase save error:', dbError);
@@ -1419,12 +1444,10 @@ export default function App() {
   const syncStatsToSupabase = async (sales: number, count: number) => {
     if (!supabase || !session?.user) return;
     try {
-      await supabase.from('settings').upsert({
-        user_id: session.user.id,
+      await saveOrUpdateSettings({
         total_sales: sales,
-        order_count: count,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id' });
+        order_count: count
+      });
     } catch (error) {
       console.error('Failed to sync stats to Supabase:', error);
     }
@@ -3610,20 +3633,18 @@ export default function App() {
                             <button 
                               onClick={async () => {
                                 // Basic validation for API Key and Secret
-                                const keyRegex = /^[a-zA-Z0-9_\-]{15,}$/;
-                                if (!keyRegex.test(steadfastConfig.apiKey) || !keyRegex.test(steadfastConfig.secretKey)) {
+                                if (steadfastConfig.apiKey.trim().length === 0 || steadfastConfig.secretKey.trim().length === 0) {
                                   addToast('Invalid Format', 'Please enter valid Steadfast API and Secret keys.', 'error');
                                   return;
                                 }
 
                                 setIsConfigSaving(true);
                                 try {
-                                  await supabase.from('settings').upsert({
-                                    user_id: session?.user?.id,
+                                  const { error: dbError } = await saveOrUpdateSettings({
                                     steadfast_api_key: steadfastConfig.apiKey,
-                                    steadfast_secret_key: steadfastConfig.secretKey,
-                                    updated_at: new Date().toISOString()
-                                  }, { onConflict: 'user_id' });
+                                    steadfast_secret_key: steadfastConfig.secretKey
+                                  });
+                                  if (dbError) throw dbError;
                                   
                                   setSteadfastConfig(prev => ({ ...prev, connected: true }));
                                   addToast('Success', 'Steadfast Connection Activated', 'success');

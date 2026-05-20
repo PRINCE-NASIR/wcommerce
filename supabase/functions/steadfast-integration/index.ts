@@ -1,13 +1,12 @@
-
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.7"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS, GET',
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -18,61 +17,79 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     
-    // We'll fetch these from the DB now
-    let steadfastApiKey = '';
-    let steadfastSecretKey = '';
-
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey);
 
-    // 1. Parse payload from Database Webhook
-    const { record: order, table, schema, type } = await req.json();
+    // 1. Parse payload
+    const body = await req.json();
+    console.log('Incoming payload for Steadfast integration:', body);
+    
+    // Support both direct invocation ({ record }) and fallback webhook/direct formats
+    const order = body.record || body;
     
     if (!order) {
       throw new Error('No order record found in payload');
+    }
+
+    // Determine the user_id
+    const userId = order.user_id;
+    if (!userId) {
+      throw new Error('User ID not provided in order payload');
     }
 
     // 2. Fetch User Specific Courier Settings
     const { data: settings, error: settingsError } = await supabaseAdmin
       .from('settings')
       .select('steadfast_api_key, steadfast_secret_key')
-      .eq('user_id', order.user_id)
+      .eq('user_id', userId)
       .single();
 
     if (settingsError || !settings?.steadfast_api_key || !settings?.steadfast_secret_key) {
-      console.error('Steadfast credentials missing for user:', order.user_id);
+      console.error('Steadfast credentials missing for user:', userId);
       
-      // Log the failure in the order status
-      const missingCredsQuery = supabaseAdmin
-        .from('orders')
-        .update({ status: 'Failed', updated_at: new Date().toISOString() });
-
-      if (order.id && !isNaN(Number(order.id))) {
-        missingCredsQuery.eq('id', order.id);
-      } else {
-        missingCredsQuery.eq('order_id', order.order_id).eq('user_id', order.user_id);
+      const orderId = order.order_id || order.id?.toString();
+      if (orderId) {
+        await supabaseAdmin
+          .from('orders')
+          .update({ status: 'Failed', updated_at: new Date().toISOString() })
+          .eq('order_id', orderId)
+          .eq('user_id', userId);
       }
-
-      await missingCredsQuery;
         
-      throw new Error('Courier credentials not configured by user.');
+      throw new Error('Courier credentials not configured by user. Please save your Steadfast keys in settings first.');
     }
 
-    steadfastApiKey = settings.steadfast_api_key;
-    steadfastSecretKey = settings.steadfast_secret_key;
+    const steadfastApiKey = settings.steadfast_api_key;
+    const steadfastSecretKey = settings.steadfast_secret_key;
 
-    // 3. Map payload to Steadfast requirements
+    // 3. Clean and map phone number (BD couriers need 11 digits, e.g., 01XXXXXXXXX)
+    let cleanedPhone = (order.customer_phone || order.phone || '').toString().replace(/\s+/g, '').replace(/[\-\(\)\+]/g, '');
+    if (cleanedPhone.startsWith('880')) {
+      cleanedPhone = cleanedPhone.slice(3);
+    }
+    if (cleanedPhone.startsWith('88')) {
+      cleanedPhone = cleanedPhone.slice(2);
+    }
+    if (cleanedPhone.length === 10 && cleanedPhone.startsWith('1')) {
+      cleanedPhone = '0' + cleanedPhone;
+    }
+
+    // 4. Clean COD Amount (must be rounded integer for Steadfast/Pathao API)
+    const rawCodAmount = order.cod_amount || order.total_amount || order.amount || 0;
+    const codAmount = Math.round(Number(rawCodAmount));
+
+    // 5. Map payload to Steadfast requirements
     const steadfastPayload = {
-      invoice_id: order.invoice_id || order.order_id || `#${order.id}`,
-      recipient_name: order.customer_name || 'Customer',
-      recipient_phone: order.customer_phone || '',
-      recipient_address: order.customer_address || order.billing_address || 'Address not provided',
-      cod_amount: order.total_amount || order.amount || 0,
-      note: `Auto-generated from order #${order.id}`
+      invoice_id: order.invoice_id || order.order_id || (order.id ? `#${order.id}` : undefined),
+      recipient_name: order.customer_name || order.customer || 'Customer',
+      recipient_phone: cleanedPhone,
+      recipient_address: order.customer_address || order.billing_address || order.address || 'Address not provided',
+      cod_amount: codAmount,
+      note: `Auto-generated from order #${order.order_id || order.id}`
     };
 
-    console.log('Payload for Steadfast:', steadfastPayload);
+    console.log('Sending payload to Steadfast:', steadfastPayload);
 
-    // 3. Send POST request to Steadfast API
+    // 6. Send POST request to Steadfast API
     const steadfastResponse = await fetch('https://portal.steadfast.com.bd/api/v1/create_order', {
       method: 'POST',
       headers: {
@@ -86,30 +103,29 @@ serve(async (req) => {
     const result = await steadfastResponse.json();
     console.log('Steadfast API result:', result);
 
-    // 4. Handle Response
-    if (steadfastResponse.status === 200 && result.status === 200) {
-      // Success: update order in Supabase with booking details
-      const { consignment_id, tracking_code } = result.order;
+    const orderId = order.order_id || order.id?.toString();
 
-    // Update the order - use order_id + user_id if id is not a numeric primary key
-    const query = supabaseAdmin.from('orders').update({
-      consignment_id: consignment_id,
-      tracking_code: tracking_code,
-      status: 'Booked',
-      updated_at: new Date().toISOString()
-    });
+    // 7. Handle Response
+    if ((steadfastResponse.status === 200 && result.status === 200) || result.order) {
+      const consignment_id = result.order?.consignment_id || result.consignment_id;
+      const tracking_code = result.order?.tracking_code || result.tracking_code;
 
-    if (order.id && !isNaN(Number(order.id))) {
-      query.eq('id', order.id);
-    } else {
-      query.eq('order_id', order.order_id).eq('user_id', order.user_id);
-    }
-
-    const { error: updateError } = await query;
-
-      if (updateError) throw updateError;
+      if (orderId) {
+        // Update the order in DB stably by user_id & order_id query
+        await supabaseAdmin
+          .from('orders')
+          .update({
+            consignment_id: consignment_id,
+            tracking_code: tracking_code,
+            status: 'Booked',
+            updated_at: new Date().toISOString()
+          })
+          .eq('order_id', orderId)
+          .eq('user_id', userId);
+      }
 
       return new Response(JSON.stringify({ 
+        success: true,
         message: 'Order booked successfully', 
         consignment_id, 
         tracking_code 
@@ -118,23 +134,18 @@ serve(async (req) => {
         status: 200,
       });
     } else {
-      // Failure: Log error and update status to 'Failed'
       console.error('Steadfast booking failed:', result);
       
-      const failQuery = supabaseAdmin.from('orders').update({ 
-        status: 'Failed',
-        updated_at: new Date().toISOString()
-      });
-
-      if (order.id && !isNaN(Number(order.id))) {
-        failQuery.eq('id', order.id);
-      } else {
-        failQuery.eq('order_id', order.order_id).eq('user_id', order.user_id);
+      if (orderId) {
+        await supabaseAdmin
+          .from('orders')
+          .update({ 
+            status: 'Failed',
+            updated_at: new Date().toISOString()
+          })
+          .eq('order_id', orderId)
+          .eq('user_id', userId);
       }
-
-      const { error: failUpdateError } = await failQuery;
-
-      if (failUpdateError) console.error('Failed to update status to Failed:', failUpdateError);
 
       return new Response(JSON.stringify({ 
         error: 'Steadfast API failure', 
