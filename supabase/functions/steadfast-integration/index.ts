@@ -41,9 +41,12 @@ Deno.serve(async (req) => {
       .from('settings')
       .select('steadfast_api_key, steadfast_secret_key')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
-    if (settingsError || !settings?.steadfast_api_key || !settings?.steadfast_secret_key) {
+    const steadfastApiKey = settings?.steadfast_api_key || body.apiKey || order.apiKey || body.record?.apiKey;
+    const steadfastSecretKey = settings?.steadfast_secret_key || body.secretKey || order.secretKey || body.record?.secretKey;
+
+    if (!steadfastApiKey || !steadfastSecretKey) {
       console.error('Steadfast credentials missing for user:', userId);
       
       const orderId = order.order_id || order.id?.toString();
@@ -57,9 +60,6 @@ Deno.serve(async (req) => {
         
       throw new Error('Courier credentials not configured by user. Please save your Steadfast keys in settings first.');
     }
-
-    const steadfastApiKey = settings.steadfast_api_key;
-    const steadfastSecretKey = settings.steadfast_secret_key;
 
     // 3. Clean and map phone number (BD couriers need 11 digits, e.g., 01XXXXXXXXX)
     let cleanedPhone = (order.customer_phone || order.phone || '').toString().replace(/\s+/g, '').replace(/[\-\(\)\+]/g, '');
@@ -89,16 +89,35 @@ Deno.serve(async (req) => {
 
     console.log('Sending payload to Steadfast:', steadfastPayload);
 
-    // 6. Send POST request to Steadfast API
-    const steadfastResponse = await fetch('https://portal.steadfast.com.bd/api/v1/create_order', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Api-Key': steadfastApiKey,
-        'Secret-Key': steadfastSecretKey,
-      },
-      body: JSON.stringify(steadfastPayload),
-    });
+    // 6. Send POST request to Steadfast API (try both new and classic domains)
+    let steadfastResponse;
+    try {
+      console.log('Attempting current production API subdomain (nextapi.steadfast.com.bd)...');
+      steadfastResponse = await fetch('https://nextapi.steadfast.com.bd/api/v1/create_order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Api-Key': steadfastApiKey,
+          'Secret-Key': steadfastSecretKey,
+        },
+        body: JSON.stringify(steadfastPayload),
+      });
+    } catch (e1: any) {
+      console.warn('nextapi.steadfast.com.bd failed. Attempting classic portal.steadfast.com.bd subdomain as backup...', e1.message);
+      try {
+        steadfastResponse = await fetch('https://portal.steadfast.com.bd/api/v1/create_order', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Api-Key': steadfastApiKey,
+            'Secret-Key': steadfastSecretKey,
+          },
+          body: JSON.stringify(steadfastPayload),
+        });
+      } catch (e2: any) {
+        throw new Error('Steadfast API resolution/connection error: ' + e1.message + ' / ' + e2.message);
+      }
+    }
 
     const result = await steadfastResponse.json();
     console.log('Steadfast API result:', result);
