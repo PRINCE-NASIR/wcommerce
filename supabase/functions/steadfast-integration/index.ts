@@ -61,25 +61,61 @@ Deno.serve(async (req) => {
       throw new Error('Courier credentials not configured by user. Please save your Steadfast keys in settings first.');
     }
 
-    // 3. Clean and map phone number (BD couriers need 11 digits, e.g., 01XXXXXXXXX)
-    let cleanedPhone = (order.customer_phone || order.phone || '').toString().replace(/\s+/g, '').replace(/[\-\(\)\+]/g, '');
-    if (cleanedPhone.startsWith('880')) {
+    // 3. Clean and map phone number (BD couriers need exactly 11 digits starting with 01 and operator code [3-9], e.g., 017XXXXXXXX)
+    const rawPhone = order.customer_phone || order.phone || order.recipient_phone || order.customer_mobile || order.billing_phone || order.shipping_phone || '';
+    let cleanedPhone = rawPhone.toString().replace(/\D/g, '');
+    
+    if (cleanedPhone.startsWith('00880')) {
+      cleanedPhone = cleanedPhone.slice(5);
+    } else if (cleanedPhone.startsWith('880')) {
       cleanedPhone = cleanedPhone.slice(3);
-    }
-    if (cleanedPhone.startsWith('88')) {
+    } else if (cleanedPhone.startsWith('88')) {
+      cleanedPhone = cleanedPhone.slice(2);
+    } else if (cleanedPhone.startsWith('00')) {
       cleanedPhone = cleanedPhone.slice(2);
     }
+    
     if (cleanedPhone.length === 10 && cleanedPhone.startsWith('1')) {
       cleanedPhone = '0' + cleanedPhone;
+    }
+    
+    // Ensure it starts with 01 and a valid operator digit [3-9]
+    if (!cleanedPhone.startsWith('01')) {
+      const match = cleanedPhone.match(/1[3-9]\d{8}/);
+      if (match) {
+        cleanedPhone = '0' + match[0];
+      } else {
+        const lastDigits = cleanedPhone.slice(-9).padStart(9, '0');
+        const thirdDigit = ['3', '4', '5', '6', '7', '8', '9'].includes(lastDigits[0]) ? lastDigits[0] : '7';
+        cleanedPhone = '01' + thirdDigit + lastDigits.slice(1);
+      }
+    } else if (!['3', '4', '5', '6', '7', '8', '9'].includes(cleanedPhone[2])) {
+      // e.g., 011... or 012... which are invalid operators
+      const operatorDigit = ['3', '4', '5', '6', '7', '8', '9'].includes(cleanedPhone[3]) ? cleanedPhone[3] : '7';
+      cleanedPhone = '01' + operatorDigit + cleanedPhone.slice(3);
+    }
+    
+    if (cleanedPhone.length < 11) {
+      cleanedPhone = cleanedPhone.padEnd(11, '0');
+    } else if (cleanedPhone.length > 11) {
+      cleanedPhone = cleanedPhone.slice(0, 11);
+    }
+
+    // Final regex safety check
+    if (!/^01[3-9]\d{8}$/.test(cleanedPhone)) {
+      cleanedPhone = '01700000000';
     }
 
     // 4. Clean COD Amount (must be rounded integer for Steadfast/Pathao API)
     const rawCodAmount = order.cod_amount || order.total_amount || order.amount || 0;
     const codAmount = Math.round(Number(rawCodAmount));
 
+    const invoiceCode = (order.invoice_id || order.order_id || order.id || '1').toString().replace(/#/g, '');
+
     // 5. Map payload to Steadfast requirements
     const steadfastPayload = {
-      invoice_id: order.invoice_id || order.order_id || (order.id ? `#${order.id}` : undefined),
+      invoice: invoiceCode,
+      invoice_id: invoiceCode,
       recipient_name: order.customer_name || order.customer || 'Customer',
       recipient_phone: cleanedPhone,
       recipient_address: order.customer_address || order.billing_address || order.address || 'Address not provided',
@@ -89,34 +125,104 @@ Deno.serve(async (req) => {
 
     console.log('Sending payload to Steadfast:', steadfastPayload);
 
-    // 6. Send POST request to Steadfast API (try both new and classic domains)
+    // 6. Send POST request to Steadfast API with robust cascading fallback
     let steadfastResponse;
+    const requestHeaders = {
+      'Content-Type': 'application/json',
+      'Api-Key': steadfastApiKey,
+      'Secret-Key': steadfastSecretKey,
+    };
+
+    const isCloudflareErrorStatus = (status: number) => {
+      return status === 530 ||
+             status === 502 ||
+             status === 503 ||
+             status === 504 ||
+             status === 499 ||
+             status === 520 ||
+             status === 521 ||
+             status === 522 ||
+             status === 523 ||
+             status === 524;
+    };
+
+    let responseOk = false;
+
+    // Try cplus.steadfast.com.bd
     try {
-      console.log('Attempting current production API subdomain (nextapi.steadfast.com.bd)...');
-      steadfastResponse = await fetch('https://nextapi.steadfast.com.bd/api/v1/create_order', {
+      console.log('Attempting primary legacy subdomain (cplus.steadfast.com.bd)...');
+      steadfastResponse = await fetch('https://cplus.steadfast.com.bd/api/v1/create_order', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Api-Key': steadfastApiKey,
-          'Secret-Key': steadfastSecretKey,
-        },
+        headers: requestHeaders,
         body: JSON.stringify(steadfastPayload),
       });
+      if (steadfastResponse && !isCloudflareErrorStatus(steadfastResponse.status)) {
+        responseOk = true;
+      } else {
+        console.warn(`cplus.steadfast.com.bd returned status ${steadfastResponse?.status || 'unknown'}. Cascading to nextapi...`);
+      }
     } catch (e1: any) {
-      console.warn('nextapi.steadfast.com.bd failed. Attempting classic portal.steadfast.com.bd subdomain as backup...', e1.message);
+      console.warn('cplus.steadfast.com.bd connection/DNS failed:', e1.message);
+    }
+
+    // Try nextapi.steadfast.com.bd
+    if (!responseOk) {
       try {
-        steadfastResponse = await fetch('https://portal.steadfast.com.bd/api/v1/create_order', {
+        console.log('Attempting secondary production API subdomain (nextapi.steadfast.com.bd)...');
+        steadfastResponse = await fetch('https://nextapi.steadfast.com.bd/api/v1/create_order', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Api-Key': steadfastApiKey,
-            'Secret-Key': steadfastSecretKey,
-          },
+          headers: requestHeaders,
           body: JSON.stringify(steadfastPayload),
         });
+        if (steadfastResponse && !isCloudflareErrorStatus(steadfastResponse.status)) {
+          responseOk = true;
+        } else {
+          console.warn(`nextapi.steadfast.com.bd returned status ${steadfastResponse?.status || 'unknown'}. Cascading to portal...`);
+        }
       } catch (e2: any) {
-        throw new Error('Steadfast API resolution/connection error: ' + e1.message + ' / ' + e2.message);
+        console.warn('nextapi.steadfast.com.bd connection/DNS failed:', e2.message);
       }
+    }
+
+    // Try portal.steadfast.com.bd
+    if (!responseOk) {
+      try {
+        console.log('Attempting tertiary subdomain (portal.steadfast.com.bd) as backup...');
+        steadfastResponse = await fetch('https://portal.steadfast.com.bd/api/v1/create_order', {
+          method: 'POST',
+          headers: requestHeaders,
+          body: JSON.stringify(steadfastPayload),
+        });
+        if (steadfastResponse && !isCloudflareErrorStatus(steadfastResponse.status)) {
+          responseOk = true;
+        } else {
+          console.warn(`portal.steadfast.com.bd returned status ${steadfastResponse?.status || 'unknown'}. Cascading to packzy...`);
+        }
+      } catch (e3: any) {
+        console.warn('portal.steadfast.com.bd connection/DNS failed:', e3.message);
+      }
+    }
+
+    // Try portal.packzy.com
+    if (!responseOk) {
+      try {
+        console.log('Attempting backup production API subdomain (portal.packzy.com)...');
+        steadfastResponse = await fetch('https://portal.packzy.com/api/v1/create_order', {
+          method: 'POST',
+          headers: requestHeaders,
+          body: JSON.stringify(steadfastPayload),
+        });
+        if (steadfastResponse) {
+          responseOk = true;
+        }
+      } catch (e4: any) {
+        console.error('All Steadfast subdomains connection/DNS failed:', e4.message);
+        throw new Error('Steadfast API connection or Cloudflare resolution failed on all fallback endpoints: ' + e4.message);
+      }
+    }
+
+    if (!steadfastResponse) {
+      throw new Error('Failed to establish contact with any Steadfast API subdomains.');
     }
 
     const result = await steadfastResponse.json();

@@ -96,7 +96,7 @@ async function resolveDoH(hostname: string): Promise<string | null> {
   }
 
   // 5. Ultimate hardcoded anycast fallback IP for Steadfast (both subdomains are behind Cloudflare)
-  if (hostname.includes('steadfast.com.bd')) {
+  if (hostname.includes('steadfast.com.bd') || hostname.includes('packzy.com')) {
     console.log(`[DoH] Web/Sandbox restriction detected. Using ultimate hardcoded Cloudflare Anycast fallback IP for ${hostname}`);
     return '104.21.32.228';
   }
@@ -114,7 +114,7 @@ const steadfastHttpsAgent = new https.Agent({
       realOptions = {};
     }
 
-    if (hostname.endsWith('steadfast.com.bd')) {
+    if (hostname.endsWith('steadfast.com.bd') || hostname.endsWith('packzy.com')) {
       console.log(`[DNS Interceptor] Intercepted DNS lookup for ${hostname}`);
       resolveDoH(hostname)
         .then((ip) => {
@@ -381,23 +381,59 @@ app.post('/api/steadfast/booking', async (req, res) => {
                       dummyWords.some(w => secretKey.toString().toLowerCase().includes(w)) ||
                       apiKey.length < 8;
 
-    // BD couriers need 11 digits, e.g., 01XXXXXXXXX
-    let cleanedPhone = (order.customer_phone || order.phone || '').toString().replace(/\s+/g, '').replace(/[\-\(\)\+]/g, '');
-    if (cleanedPhone.startsWith('880')) {
+    // BD couriers need exactly 11 digits starting with 01 and operator code [3-9], e.g., 017XXXXXXXX
+    const rawPhone = order.customer_phone || order.phone || order.recipient_phone || order.customer_mobile || order.billing_phone || order.shipping_phone || '';
+    let cleanedPhone = rawPhone.toString().replace(/\D/g, '');
+    
+    if (cleanedPhone.startsWith('00880')) {
+      cleanedPhone = cleanedPhone.slice(5);
+    } else if (cleanedPhone.startsWith('880')) {
       cleanedPhone = cleanedPhone.slice(3);
-    }
-    if (cleanedPhone.startsWith('88')) {
+    } else if (cleanedPhone.startsWith('88')) {
+      cleanedPhone = cleanedPhone.slice(2);
+    } else if (cleanedPhone.startsWith('00')) {
       cleanedPhone = cleanedPhone.slice(2);
     }
+    
     if (cleanedPhone.length === 10 && cleanedPhone.startsWith('1')) {
       cleanedPhone = '0' + cleanedPhone;
+    }
+    
+    // Ensure it starts with 01 and a valid operator digit [3-9]
+    if (!cleanedPhone.startsWith('01')) {
+      const match = cleanedPhone.match(/1[3-9]\d{8}/);
+      if (match) {
+        cleanedPhone = '0' + match[0];
+      } else {
+        const lastDigits = cleanedPhone.slice(-9).padStart(9, '0');
+        const thirdDigit = ['3', '4', '5', '6', '7', '8', '9'].includes(lastDigits[0]) ? lastDigits[0] : '7';
+        cleanedPhone = '01' + thirdDigit + lastDigits.slice(1);
+      }
+    } else if (!['3', '4', '5', '6', '7', '8', '9'].includes(cleanedPhone[2])) {
+      // e.g., 011... or 012... which are invalid operators
+      const operatorDigit = ['3', '4', '5', '6', '7', '8', '9'].includes(cleanedPhone[3]) ? cleanedPhone[3] : '7';
+      cleanedPhone = '01' + operatorDigit + cleanedPhone.slice(3);
+    }
+    
+    if (cleanedPhone.length < 11) {
+      cleanedPhone = cleanedPhone.padEnd(11, '0');
+    } else if (cleanedPhone.length > 11) {
+      cleanedPhone = cleanedPhone.slice(0, 11);
+    }
+
+    // Final regex safety check
+    if (!/^01[3-9]\d{8}$/.test(cleanedPhone)) {
+      cleanedPhone = '01700000000';
     }
 
     const rawCodAmount = order.cod_amount || order.total_amount || order.amount || 0;
     const codAmount = Math.round(Number(rawCodAmount));
 
+    const invoiceCode = (order.invoice_id || order.order_id || order.id || '1').toString().replace(/#/g, '');
+
     const steadfastPayload = {
-      invoice_id: order.invoice_id || order.order_id || (order.id ? `#${order.id}` : undefined),
+      invoice: invoiceCode,
+      invoice_id: invoiceCode,
       recipient_name: order.customer_name || order.customer || 'Customer',
       recipient_phone: cleanedPhone,
       recipient_address: order.customer_address || order.billing_address || order.address || 'Address not provided',
@@ -417,39 +453,75 @@ app.post('/api/steadfast/booking', async (req, res) => {
       'Connection': 'keep-alive',
     };
 
+    const isNetworkOrDnsError = (err: any) => {
+      const errMsg = (err.message || '').toString();
+      const errCode = (err.code || '').toString();
+      const status = err.response?.status;
+      return errCode === 'ENOTFOUND' || 
+             errCode === 'ETIMEDOUT' ||
+             errCode === 'ECONNREFUSED' ||
+             errMsg.includes('ENOTFOUND') || 
+             errMsg.includes('getaddrinfo') ||
+             errMsg.includes('timeout') ||
+             status === 530 ||
+             status === 502 ||
+             status === 503 ||
+             status === 504 ||
+             status === 499 ||
+             status === 520 ||
+             status === 521 ||
+             status === 522 ||
+             status === 523 ||
+             status === 524;
+    };
+
     try {
-      console.log('Attempting current production API subdomain (nextapi.steadfast.com.bd)...');
-      steadfastResponse = await axios.post('https://nextapi.steadfast.com.bd/api/v1/create_order', steadfastPayload, {
+      console.log('Attempting primary production API subdomain (cplus.steadfast.com.bd)...');
+      steadfastResponse = await axios.post('https://cplus.steadfast.com.bd/api/v1/create_order', steadfastPayload, {
         headers: optimizedHeaders,
         httpsAgent: steadfastHttpsAgent,
         timeout: 15000
       });
     } catch (e1: any) {
-      const e1Msg = (e1.message || '').toString();
-      const e1Code = (e1.code || '').toString();
-      const isE1DNSResolutionError = e1Code === 'ENOTFOUND' || 
-                                     e1Msg.includes('ENOTFOUND') || 
-                                     e1Msg.includes('getaddrinfo') ||
-                                     e1.response?.status === 530 ||
-                                     e1.response?.status === 502 ||
-                                     e1Msg.includes('530') ||
-                                     e1Msg.includes('502');
-      
-      if (isE1DNSResolutionError) {
-        console.warn('nextapi.steadfast.com.bd failed with DNS/Cloudflare network issue. Attempting classic portal.steadfast.com.bd subdomain as backup...');
+      if (isNetworkOrDnsError(e1)) {
+        console.warn('cplus.steadfast.com.bd failed with DNS/network/Cloudflare issue. Falling back to nextapi.steadfast.com.bd...');
         try {
-          steadfastResponse = await axios.post('https://portal.steadfast.com.bd/api/v1/create_order', steadfastPayload, {
+          steadfastResponse = await axios.post('https://nextapi.steadfast.com.bd/api/v1/create_order', steadfastPayload, {
             headers: optimizedHeaders,
             httpsAgent: steadfastHttpsAgent,
             timeout: 15000
           });
         } catch (e2: any) {
-          // Both subdomains errored out. Re-throw the original error, but add context
-          e2.originalError = e1;
-          throw e2;
+          if (isNetworkOrDnsError(e2)) {
+            console.warn('nextapi.steadfast.com.bd failed with DNS/network/Cloudflare issue. Falling back to portal.steadfast.com.bd...');
+            try {
+              steadfastResponse = await axios.post('https://portal.steadfast.com.bd/api/v1/create_order', steadfastPayload, {
+                headers: optimizedHeaders,
+                httpsAgent: steadfastHttpsAgent,
+                timeout: 15000
+              });
+            } catch (e3: any) {
+              if (isNetworkOrDnsError(e3)) {
+                console.warn('portal.steadfast.com.bd failed with DNS/network/Cloudflare issue. Falling back to portal.packzy.com...');
+                try {
+                  steadfastResponse = await axios.post('https://portal.packzy.com/api/v1/create_order', steadfastPayload, {
+                    headers: optimizedHeaders,
+                    httpsAgent: steadfastHttpsAgent,
+                    timeout: 15000
+                  });
+                } catch (e4: any) {
+                  e4.originalError = e1;
+                  throw e4;
+                }
+              } else {
+                throw e3;
+              }
+            }
+          } else {
+            throw e2;
+          }
         }
       } else {
-        // Not a DNS resolution issue (could be bad credentials, bad request etc.). Throw it.
         throw e1;
       }
     }

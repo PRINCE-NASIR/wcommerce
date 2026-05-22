@@ -792,6 +792,8 @@ export default function App() {
                 amount: o.amount,
                 codAmount: o.cod_amount,
                 status: o.status,
+                consignment_id: o.consignment_id,
+                tracking_code: o.tracking_code,
                 date: o.order_date || new Date(o.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
                 time: o.order_time || 'Cloud'
               })));
@@ -1359,7 +1361,8 @@ export default function App() {
     }
     try {
       console.log('Syncing order to Supabase:', order.id);
-      const { error } = await supabase.from('orders').upsert({
+      
+      const upsertPayload: any = {
         user_id: session.user.id,
         order_id: order.id,
         customer_name: order.customer,
@@ -1375,7 +1378,16 @@ export default function App() {
         order_date: order.date,
         order_time: order.time,
         updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id, order_id' });
+      };
+
+      if (order.consignment_id) {
+        upsertPayload.consignment_id = order.consignment_id;
+      }
+      if (order.tracking_code) {
+        upsertPayload.tracking_code = order.tracking_code;
+      }
+
+      const { error } = await supabase.from('orders').upsert(upsertPayload, { onConflict: 'user_id, order_id' });
 
       if (error) {
         console.error('Supabase Order Sync Error:', error);
@@ -3082,6 +3094,35 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+
+                {/* Steadfast Courier Tracking Info */}
+                {(selectedOrder.consignment_id || selectedOrder.tracking_code) && (
+                  <div className="bg-orange-50/50 border border-orange-100 rounded-2xl p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-orange-100 text-orange-600 rounded-xl">
+                        <Truck size={18} />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold text-orange-600 uppercase block leading-none mb-1">Steadfast Courier Booking</p>
+                        <span className="text-xs font-bold text-slate-700">Status: {selectedOrder.status}</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-4 text-xs">
+                      {selectedOrder.consignment_id && (
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase leading-none mb-1">Consignment ID</p>
+                          <p className="font-mono font-bold text-slate-700 select-all bg-white border border-slate-200 px-2 py-1 rounded-lg">{selectedOrder.consignment_id}</p>
+                        </div>
+                      )}
+                      {selectedOrder.tracking_code && (
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase leading-none mb-1">Tracking Code</p>
+                          <p className="font-mono font-bold text-slate-700 select-all bg-white border border-slate-200 px-2 py-1 rounded-lg">{selectedOrder.tracking_code}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="bg-slate-50 p-6 flex gap-3 border-t border-slate-100">
                 <button 
@@ -3141,7 +3182,7 @@ export default function App() {
                   </motion.button>
                 )}
                 
-                {selectedOrder.status !== 'Booked' && (
+                {(!selectedOrder.consignment_id || !selectedOrder.tracking_code) && (
                   <button 
                     onClick={() => handleSendCourier(selectedOrder)}
                     className="flex-1 bg-orange-500 text-white font-bold py-3.5 rounded-xl hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20 active:scale-95 flex items-center justify-center gap-2"
