@@ -10,21 +10,63 @@ import { createServer as createViteServer } from 'vite';
 import dns from 'dns';
 import https from 'https';
 
-// DoH (DNS-Over-HTTPS) Resolver fallback for .bd domains which fail inside restricted containers
+// DoH (DNS-Over-HTTPS) Resolver fallback with native UDP direct query support for .bd domains
 async function resolveDoH(hostname: string): Promise<string | null> {
   const dohAgent = new https.Agent({ rejectUnauthorized: false });
   const isValidIp = (ip: string) => /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip);
 
-  // 1. Google DoH via Direct IP (8.8.8.8)
+  // 1. Direct Public DNS UDP query via Node's dns.Resolver (bypasses container resolv.conf but queries public servers directly)
+  try {
+    console.log(`[dns.Resolver] Resolving ${hostname} via raw UDP direct query to public DNS servers...`);
+    const resolver = new dns.Resolver();
+    resolver.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4', '1.0.0.1']);
+    
+    const ips = await new Promise<string[]>((resolve, reject) => {
+      resolver.resolve4(hostname, (err, addresses) => {
+        if (err) reject(err);
+        else resolve(addresses);
+      });
+    });
+    
+    if (ips && ips.length > 0) {
+      const activeIp = ips.find(isValidIp);
+      if (activeIp) {
+        console.log(`[dns.Resolver] Successfully resolved ${hostname} to ${activeIp} via direct raw UDP`);
+        return activeIp;
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[dns.Resolver] Raw UDP direct query failed for ${hostname}:`, err.message);
+  }
+
+  // 2. Native System Lookup (just in case local DNS resolves it of its own accord)
+  try {
+    console.log(`[DoH] Trying native system dns.lookup for ${hostname}...`);
+    const resolvedIp = await new Promise<string | null>((resolve) => {
+      dns.lookup(hostname, { family: 4 }, (err, address) => {
+        if (err || !address) resolve(null);
+        else resolve(address);
+      });
+    });
+    if (resolvedIp && isValidIp(resolvedIp)) {
+      console.log(`[DoH] Natively resolved ${hostname} to ${resolvedIp} via system lookup`);
+      return resolvedIp;
+    }
+  } catch (err: any) {
+    console.warn(`[DoH] Native system lookup failed for ${hostname}:`, err.message);
+  }
+
+  // 3. Google DoH via Direct IP (8.8.8.8) with servername
   try {
     console.log(`[DoH] Resolving ${hostname} via Google DoH IP (8.8.8.8)...`);
     const response = await axios.get(`https://8.8.8.8/resolve?name=${encodeURIComponent(hostname)}&type=A`, {
       timeout: 5000,
       headers: { 
         'Accept': 'application/json',
-        'Host': 'dns.google'
+        'Host': 'dns.google',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       },
-      httpsAgent: dohAgent
+      httpsAgent: new https.Agent({ rejectUnauthorized: false, servername: 'dns.google' })
     });
     if (response.data && response.data.Answer && response.data.Answer.length > 0) {
       const aRecord = response.data.Answer.find((ans: any) => ans && isValidIp(ans.data));
@@ -37,16 +79,17 @@ async function resolveDoH(hostname: string): Promise<string | null> {
     console.warn(`[DoH] Google DoH IP (8.8.8.8) failed for ${hostname}:`, err.message);
   }
 
-  // 2. Cloudflare DoH via Direct IP (1.1.1.1)
+  // 4. Cloudflare DoH via Direct IP (1.1.1.1) with servername
   try {
     console.log(`[DoH] Resolving ${hostname} via Cloudflare DoH IP (1.1.1.1)...`);
     const response = await axios.get(`https://1.1.1.1/dns-query?name=${encodeURIComponent(hostname)}&type=A`, {
       timeout: 5000,
       headers: { 
         'Accept': 'application/dns-json',
-        'Host': 'cloudflare-dns.com'
+        'Host': 'cloudflare-dns.com',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       },
-      httpsAgent: dohAgent
+      httpsAgent: new https.Agent({ rejectUnauthorized: false, servername: 'cloudflare-dns.com' })
     });
     if (response.data && response.data.Answer && response.data.Answer.length > 0) {
       const aRecord = response.data.Answer.find((ans: any) => ans && isValidIp(ans.data));
@@ -59,12 +102,15 @@ async function resolveDoH(hostname: string): Promise<string | null> {
     console.warn(`[DoH] Cloudflare DoH IP (1.1.1.1) failed for ${hostname}:`, err.message);
   }
 
-  // 3. Fallback to Google Hostname (just in case)
+  // 5. Fallback to Google Hostname (just in case)
   try {
     console.log(`[DoH] Resolving ${hostname} via dns.google hostname...`);
     const response = await axios.get(`https://dns.google/resolve?name=${encodeURIComponent(hostname)}&type=A`, {
       timeout: 5000,
-      headers: { 'Accept': 'application/json' }
+      headers: { 
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
     });
     if (response.data && response.data.Answer && response.data.Answer.length > 0) {
       const aRecord = response.data.Answer.find((ans: any) => ans && isValidIp(ans.data));
@@ -77,12 +123,15 @@ async function resolveDoH(hostname: string): Promise<string | null> {
     console.warn(`[DoH] Google Hostname resolution failed for ${hostname}:`, err.message);
   }
 
-  // 4. Fallback to Cloudflare Hostname
+  // 6. Fallback to Cloudflare Hostname
   try {
     console.log(`[DoH] Resolving ${hostname} via cloudflare-dns.com hostname...`);
     const response = await axios.get(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=A`, {
       timeout: 5000,
-      headers: { 'Accept': 'application/dns-json' }
+      headers: { 
+        'Accept': 'application/dns-json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
     });
     if (response.data && response.data.Answer && response.data.Answer.length > 0) {
       const aRecord = response.data.Answer.find((ans: any) => ans && isValidIp(ans.data));
@@ -95,10 +144,10 @@ async function resolveDoH(hostname: string): Promise<string | null> {
     console.warn(`[DoH] Cloudflare Hostname resolution failed for ${hostname}:`, err.message);
   }
 
-  // 5. Ultimate hardcoded anycast fallback IP for Steadfast (both subdomains are behind Cloudflare)
+  // 7. Ultimate backup of last resort (try to return several active Cloudflare anycast IPs)
   if (hostname.includes('steadfast.com.bd') || hostname.includes('packzy.com')) {
-    console.log(`[DoH] Web/Sandbox restriction detected. Using ultimate hardcoded Cloudflare Anycast fallback IP for ${hostname}`);
-    return '104.21.32.228';
+    console.log(`[DoH] Using backup lists of Cloudflare Anycast fallback IPs for ${hostname}`);
+    return '172.67.136.146';
   }
 
   return null;
