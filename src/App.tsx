@@ -576,6 +576,9 @@ export default function App() {
         
         setSyncStatus(prev => ({ ...prev, orders: { loading: false, lastUpdate: new Date().toLocaleTimeString() } }));
         setIsBackendConfigured(true);
+        if (orderAdded > 0) {
+          playNotificationSound();
+        }
         setNotifications(prev => [{
           id: generateId(),
           title: 'Orders Synced',
@@ -953,20 +956,14 @@ export default function App() {
       setOrders(prev => {
         // Prevent duplicates
         if (prev.some(o => o.id === newOrder.id)) return prev;
+
+        // Trigger beautiful notification chime & toast for live WooCommerce webhook events
+        setTimeout(() => {
+          triggerNewOrderNotification(newOrder, 'WooCommerce');
+        }, 100);
+
         return [newOrder, ...prev];
       });
-
-      setNotifications(prev => [
-        {
-          id: generateId(),
-          title: 'WooCommerce Order Received',
-          message: `New order ${newOrder.id} from ${newOrder.customer}`,
-          time: 'Just now',
-          read: false,
-          orderId: newOrder.id
-        },
-        ...prev
-      ]);
     });
 
     getWooProducts();
@@ -1010,15 +1007,32 @@ export default function App() {
             };
             setOrders(prev => {
               if (prev.find(o => o.id === newOrder.id)) return prev;
+              
+              // Trigger beautiful notification chime & toast for real-time cloud orders
+              setTimeout(() => {
+                triggerNewOrderNotification(newOrder, 'Supabase');
+              }, 100);
+
               return [newOrder, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             setOrders(prev => prev.map(o => 
               o.id === payload.new.order_id ? {
                 ...o,
-                status: payload.new.status,
-                amount: payload.new.amount,
-                customer: payload.new.customer_name
+                id: payload.new.order_id,
+                customer: payload.new.customer_name || o.customer,
+                phone: payload.new.customer_phone || o.phone,
+                address: payload.new.customer_address || o.address,
+                productName: payload.new.product_name || o.productName,
+                productPrice: payload.new.product_price ?? o.productPrice,
+                deliveryCharge: payload.new.delivery_charge ?? o.deliveryCharge,
+                amount: payload.new.amount ?? o.amount,
+                codAmount: payload.new.cod_amount ?? o.codAmount,
+                status: payload.new.status || o.status,
+                consignment_id: payload.new.consignment_id !== undefined ? payload.new.consignment_id : o.consignment_id,
+                tracking_code: payload.new.tracking_code !== undefined ? payload.new.tracking_code : o.tracking_code,
+                date: payload.new.order_date || o.date,
+                time: payload.new.order_time || o.time
               } : o
             ));
           } else if (payload.eventType === 'DELETE') {
@@ -1291,6 +1305,77 @@ export default function App() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [toasts, setToasts] = useState<any[]>([]);
 
+  // Synthesize a beautiful, clean, modern notification sound chime using the Web Audio API
+  const playNotificationSound = () => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      
+      const ctx = new AudioContextClass();
+      
+      // Warm synth chime with pleasant bell harmonic structure
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(880, ctx.currentTime); // A5 note
+      osc1.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.12); // Rising fifth
+      
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(440, ctx.currentTime); // A4 note
+      osc2.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.12); // Rising fifth
+      
+      gainNode.gain.setValueAtTime(0.0, ctx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.04);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.6);
+      
+      osc1.connect(gainNode);
+      osc2.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      
+      osc1.start(ctx.currentTime);
+      osc2.start(ctx.currentTime);
+      osc1.stop(ctx.currentTime + 0.6);
+      osc2.stop(ctx.currentTime + 0.6);
+    } catch (e) {
+      console.warn('Audio Context failed to play:', e);
+    }
+  };
+
+  const triggerNewOrderNotification = (order: any, type: 'WooCommerce' | 'Supabase' | 'Manual' = 'WooCommerce') => {
+    const id = generateId();
+    const title = type === 'WooCommerce' ? 'WooCommerce order received' : 
+                  type === 'Supabase' ? 'Cloud Order Synchronized' : 'New Order Created';
+    const message = `New order ${order.id} for ${order.customer || 'Customer'} has been received.`;
+    
+    // Play sweet chime
+    playNotificationSound();
+    
+    // Add to toast notifications
+    const newToast = { id, title, message, type: 'success' as const };
+    setToasts(prev => [newToast, ...prev].slice(0, 3));
+    
+    // Auto-remove toast
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 5000);
+
+    // Add to standard notifications container
+    setNotifications(prev => {
+      if (prev.some(n => n.orderId === order.id)) return prev;
+      return [{
+        id,
+        title,
+        message,
+        time: 'Just now',
+        read: false,
+        orderId: order.id,
+        type: 'success'
+      }, ...prev];
+    });
+  };
+
   // Function to add a toast
   const addToast = (title: string, message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = generateId();
@@ -1322,6 +1407,33 @@ export default function App() {
   const [currentView, setCurrentView] = useState<'dashboard' | 'orders' | 'products' | 'purchases' | 'customers' | 'settings' | 'profile' | 'sync' | 'steadfast' | 'guide'>('dashboard');
   const [orders, setOrders] = useState<any[]>([]);
   const [activeGuide, setActiveGuide] = useState<'woo' | 'steadfast'>('woo');
+
+  // Helper to generate a 100% collision-free Order ID for manually added orders
+  const getUniqueOrderId = (currentOrders: any[]) => {
+    let maxNum = 848;
+    currentOrders.forEach(o => {
+      if (o.id && typeof o.id === 'string' && o.id.startsWith('#ORD') && !o.id.startsWith('#ORD-')) {
+        const match = o.id.match(/^#ORD(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num) && num > maxNum) {
+            maxNum = num;
+          }
+        }
+      }
+    });
+
+    let nextNum = maxNum + 1;
+    let candidateId = `#ORD${nextNum}`;
+    
+    // In case there is any overlap, increment until we find a truly vacant spot
+    while (currentOrders.some(o => o.id === candidateId)) {
+      nextNum++;
+      candidateId = `#ORD${nextNum}`;
+    }
+    
+    return candidateId;
+  };
 
   useEffect(() => {
     const isP = wooConfig.url.includes('test.local') || wooConfig.url.includes('example.com') || !wooConfig.url;
@@ -1621,7 +1733,7 @@ export default function App() {
     };
 
     // Create an order for this customer immediately
-    const newOrderId = `#ORD${Math.floor(Math.random() * 1000) + 800}`;
+    const newOrderId = getUniqueOrderId(orders);
     const newOrder = {
       id: newOrderId,
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
@@ -2167,8 +2279,9 @@ export default function App() {
     const deliveryCharge = parseFloat(newOrderData.deliveryCharge) || 0;
     const totalAmount = productPrice + deliveryCharge;
 
+    const newOrderId = getUniqueOrderId(orders);
     const newOrder = {
-      id: `#ORD${848 + orders.length + 1}`,
+      id: newOrderId,
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
       customer: newOrderData.customer || 'New Customer',
@@ -2193,17 +2306,7 @@ export default function App() {
       avgOrderValue: newCount > 0 ? newSales / newCount : 0
     }));
     syncStatsToSupabase(newSales, newCount);
-    setNotifications([
-      {
-        id: generateId(),
-        title: 'New Order Received',
-        message: `New order ${newOrder.id} for ${newOrder.customer} has been placed.`,
-        time: 'Just now',
-        read: false,
-        orderId: newOrder.id
-      },
-      ...notifications
-    ]);
+    triggerNewOrderNotification(newOrder, 'Manual');
     setIsAddNewModalOpen(false);
     setNewOrderData({ 
       customer: '', 
